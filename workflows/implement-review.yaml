@@ -1,0 +1,51 @@
+# implement-review:
+#
+#   Codex implement → tests (retry ×2 with feedback) → Claude review
+#   → human approval → draft PR
+version: 1
+name: implement-review
+description: Implement, test with retries, independent review, approval, draft PR.
+defaults:
+  timeout: 45m
+
+steps:
+  - id: implement
+    type: agent
+    runner: codex
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: review
+    type: agent
+    runner: claude
+    skill: code-review
+    output: review
+    prompt: |
+      Independently review the changes on this branch for the task below.
+      Inspect them with `git diff {{base_sha}}` and read the touched files.
+
+      Task:
+      {{task}}
+
+      Implementer's summary:
+      {{step.implement.output}}
+
+  - id: approval
+    type: approval
+    reason: Implementation passed tests and review. Approve to open a draft PR.
+
+  - id: pr
+    type: github_pr
+    draft: true

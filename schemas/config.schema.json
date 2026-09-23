@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jpolec/herdr-plugin-odysseus/schemas/config.schema.json",
+  "title": "herdr-orchestrator config (global or .ai/herdr-orchestrator/config.yaml)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workflow": {
+          "type": "string"
+        },
+        "runner": {
+          "type": "string"
+        },
+        "base_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_parallel_runs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_parallel_agents": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "poll_interval_ms": {
+          "type": "integer",
+          "minimum": 50
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_agents_per_run": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_runtime": {
+          "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_variants": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "advisory; only with provider-reported usage"
+        },
+        "max_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "agent_timeout": {
+          "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "command_timeout": {
+          "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "agent_startup_timeout": {
+          "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "approval_timeout": {
+          "oneOf": [
+            {
+              "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "worktree_root": {
+          "type": "string"
+        },
+        "branch_prefix": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_./-]*$"
+        },
+        "auto_commit": {
+          "type": "boolean"
+        },
+        "commit_message": {
+          "type": "string"
+        },
+        "cleanup_on_success": {
+          "type": "boolean"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "manage_exclude": {
+          "type": "boolean"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "builtin_default": {
+          "type": "boolean"
+        },
+        "replace_global": {
+          "type": "boolean"
+        }
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "draft_pr": {
+          "type": "boolean"
+        },
+        "auto_merge": {
+          "const": false
+        },
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "push_before_pr": {
+          "type": "boolean"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "inherit_all": {
+          "type": "boolean"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hash_chain": {
+          "type": "boolean"
+        }
+      }
+    },
+    "herdr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "auto",
+            "required",
+            "disabled"
+          ]
+        },
+        "socket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notify": {
+          "type": "boolean"
+        },
+        "close_panes_on_success": {
+          "type": "boolean"
+        },
+        "interrupt_on_timeout": {
+          "type": "boolean"
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "excerpt_head_lines": {
+          "type": "integer"
+        },
+        "excerpt_tail_lines": {
+          "type": "integer"
+        },
+        "feedback_max_bytes": {
+          "type": "integer"
+        },
+        "pane_read_lines": {
+          "type": "integer"
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "none",
+            "bubblewrap",
+            "container",
+            "macos_profile"
+          ],
+          "description": "only none is implemented"
+        }
+      }
+    },
+    "runners": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "pane",
+              "headless",
+              "shell"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env_inherit": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "tests",
+          "lint",
+          "security"
+        ]
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+version: 1
+project:
+  name: qj-api
+defaults:
+  workflow: implement-review
+  runner: codex
+  base_branch: main
+scheduler:
+  max_parallel_runs: 4
+  max_parallel_agents: 8
+limits:
+  max_runtime: 2h
+  max_retries: 3
+checks:
+  tests: ["cargo", "test", "--all"]
+  lint: ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"]
+git:
+  worktree_root: .herdr-orchestrator/worktrees
+  branch_prefix: herdr/
+policy:
+  files:
+    - .ai/herdr-orchestrator/policy.yaml
+github:
+  draft_pr: true
+  auto_merge: false
+runners:
+  aider:
+    mode: shell
+    command: ["aider", "--yes-always", "--no-auto-commits", "--message-file", "{{prompt_file}}"]

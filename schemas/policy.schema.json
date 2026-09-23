@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jpolec/herdr-plugin-odysseus/schemas/policy.schema.json",
+  "title": "herdr-orchestrator policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "default_decision": {
+      "enum": [
+        "allow",
+        "require_approval",
+        "deny"
+      ]
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "decision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "allow",
+              "require_approval",
+              "deny"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "read",
+                "write",
+                "delete",
+                "command",
+                "git_commit",
+                "git_push",
+                "github_pr",
+                "agent_start",
+                "worktree_create",
+                "network",
+                "env_mutation",
+                "diff_summary"
+              ]
+            }
+          },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "actions": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "read",
+                    "write",
+                    "delete",
+                    "command",
+                    "git_commit",
+                    "git_push",
+                    "github_pr",
+                    "agent_start",
+                    "worktree_create",
+                    "network",
+                    "env_mutation",
+                    "diff_summary"
+                  ]
+                }
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "globset patterns, worktree-relative"
+              },
+              "exclude_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "wildcards (* matches anything) against normalized command text"
+              },
+              "command_tags": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "shell",
+                    "git",
+                    "git_push",
+                    "git_force_push",
+                    "git_reset_hard",
+                    "git_clean_force",
+                    "git_branch_force_delete",
+                    "git_history_rewrite",
+                    "rm_recursive",
+                    "rm_dangerous_target",
+                    "terraform_apply",
+                    "terraform_destroy",
+                    "kubectl_delete_namespace",
+                    "kubectl_mutation",
+                    "production_target",
+                    "deploy",
+                    "network",
+                    "credential_access",
+                    "package_install",
+                    "privilege_escalation"
+                  ]
+                }
+              },
+              "runners": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "branches": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "repos": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "shell": {
+                "type": "boolean"
+              },
+              "min_lines_changed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "min_deleted_files": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "min_deleted_lines": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "min_files_changed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

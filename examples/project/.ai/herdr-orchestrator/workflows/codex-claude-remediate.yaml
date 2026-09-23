@@ -1,0 +1,44 @@
+# Codex implements, Claude reviews with a gate; findings go back to the SAME
+# Codex session (it keeps its context), then tests run again.
+version: 1
+name: codex-claude-remediate
+description: Codex implement → tests → gated Claude review → Codex remediation loop → approval → draft PR.
+defaults:
+  timeout: 45m
+steps:
+  - id: implement
+    type: agent
+    runner: codex
+    skill: project-conventions
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+
+  - id: tests
+    type: check
+    check: tests
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+
+  - id: review
+    type: agent
+    runner: claude
+    skill: code-review
+    output: review
+    gate: true
+    prompt: |
+      Review the branch against {{base_sha}} for this task:
+      {{task}}
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+
+  - id: approval
+    type: approval
+    reason: Reviewed and tested. Approve to open a draft PR.
+
+  - id: pr
+    type: github_pr
+    draft: true

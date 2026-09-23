@@ -1,0 +1,44 @@
+[package]
+name = "herdr-orchestrator"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Governed multi-agent workflow orchestration plugin for Herdr"
+license = "MIT"
+repository = "https://github.com/jpolec/herdr-plugin-odysseus"
+readme = "README.md"
+keywords = ["herdr", "agents", "orchestration", "workflow", "policy"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "herdr-orchestrator"
+path = "src/main.rs"
+
+[lib]
+name = "herdr_orchestrator"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+regex = "1"
+globset = "0.4"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

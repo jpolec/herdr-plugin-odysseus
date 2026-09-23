@@ -1,0 +1,67 @@
+# secure-change:
+#
+#   implement → tests → lint → security scan → security review (gated,
+#   findings go back to the implementer) → policy gate → approval → draft PR
+version: 1
+name: secure-change
+description: Implementation with tests, lint, security scan, gated security review and policy gate.
+defaults:
+  timeout: 45m
+
+steps:
+  - id: implement
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 20m
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+
+  - id: lint
+    type: check
+    check: lint
+    timeout: 10m
+    on_failure:
+      retry_step: implement
+      max_attempts: 1
+
+  - id: security-scan
+    type: check
+    check: security
+    timeout: 10m
+    continue_on_failure: true
+
+  - id: security-review
+    type: agent
+    runner: claude
+    skill: security-review
+    output: review
+    gate: true
+    prompt: |
+      Perform a security review of the changes made for this task.
+      Inspect them with `git diff {{base_sha}}`.
+
+      Task:
+      {{task}}
+    on_failure:
+      retry_step: implement
+      max_attempts: 1
+
+  - id: policy
+    type: policy
+
+  - id: approval
+    type: approval
+    reason: Security-reviewed change is ready. Approve to open a draft PR.
+
+  - id: pr
+    type: github_pr
+    draft: true

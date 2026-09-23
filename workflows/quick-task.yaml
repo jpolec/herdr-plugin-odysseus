@@ -1,0 +1,17 @@
+# quick-task: one agent, one isolated worktree, nothing else.
+#
+#   agent → done
+#
+# Changes are still checked against policy when the step finishes and are
+# committed to the run's branch. No PR is opened.
+version: 1
+name: quick-task
+description: Run one agent on the task in an isolated worktree.
+steps:
+  - id: implement
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      {{feedback}}

@@ -1,0 +1,240 @@
+# herdr-orchestrator default policy (conservative).
+#
+# Decisions: allow | require_approval | deny. When several rules match, the
+# most restrictive wins. Anything not matched falls to default_decision.
+#
+# ENFORCEMENT BOUNDARY: command rules apply to commands the orchestrator
+# runs (workflow `command` steps, git/gh operations, agent launch args).
+# File rules apply to changes found in the worktree diff at step boundaries,
+# which also catches files an agent wrote through its own tools. Commands an
+# agent runs inside its own terminal are NOT intercepted in real time.
+# See docs/SECURITY_MODEL.md.
+version: 1
+name: default
+default_decision: allow
+
+rules:
+  # ---------------------------------------------------------------- DENY --
+  - id: deny-secret-files
+    description: Secrets and credentials must never be written or deleted by automation.
+    match:
+      paths:
+        - "**/.env"
+        - "**/.env.*"
+        - "**/*.env"
+        - "**/secrets/**"
+        - "**/.secrets/**"
+        - "**/.ssh/**"
+        - "**/.aws/credentials"
+        - "**/.netrc"
+        - "**/.npmrc"
+        - "**/.pypirc"
+        - "**/.git-credentials"
+        - "**/id_rsa*"
+        - "**/id_ed25519*"
+        - "**/id_ecdsa*"
+        - "**/*.pem"
+        - "**/*.key"
+        - "**/*.p12"
+        - "**/*.pfx"
+        - "**/*.keystore"
+        - "**/*.jks"
+      exclude_paths:
+        - "**/.env.example"
+        - "**/.env.sample"
+        - "**/.env.template"
+        - "**/.env.dist"
+    actions: [write, delete]
+    decision: deny
+
+  - id: deny-read-credential-stores
+    description: Reading known credential stores is never part of a coding task.
+    match:
+      paths: ["**/.ssh/**", "**/.aws/credentials", "**/.netrc", "**/.config/gh/hosts.yml", "**/.git-credentials", "**/.kube/config"]
+    actions: [read]
+    decision: deny
+
+  - id: deny-credential-commands
+    match:
+      command_tags: [credential_access]
+    decision: deny
+    reason: command references a known credential store
+
+  - id: deny-force-push
+    match:
+      command_tags: [git_force_push]
+    decision: deny
+    reason: force pushes and remote ref deletion are never automated
+
+  - id: deny-destructive-git
+    match:
+      command_tags: [git_reset_hard, git_clean_force, git_branch_force_delete]
+    decision: deny
+    reason: destructive git operations discard work irrecoverably
+
+  - id: deny-destructive-rm
+    match:
+      command_tags: [rm_dangerous_target]
+    decision: deny
+    reason: recursive delete of a root, home, repository or system path
+
+  - id: deny-terraform-destroy
+    match:
+      command_tags: [terraform_destroy]
+    decision: deny
+
+  - id: deny-kubectl-delete-namespace
+    match:
+      command_tags: [kubectl_delete_namespace]
+    decision: deny
+
+  - id: deny-production-targets
+    match:
+      command_tags: [production_target]
+    decision: deny
+    reason: command targets an environment that looks like production
+
+  - id: deny-agent-permission-bypass
+    description: Refuse to launch agents with all safety prompts disabled.
+    match:
+      commands:
+        - "*--dangerously-skip-permissions*"
+        - "*--dangerously-bypass-approvals-and-sandbox*"
+        - "*--yolo*"
+        - "*bypassPermissions*"
+    actions: [agent_start]
+    decision: deny
+
+  # ---------------------------------------------------- REQUIRE APPROVAL --
+  - id: approve-migrations
+    match:
+      paths: ["**/migrations/**", "**/migrate/**", "**/*.sql", "**/schema.prisma", "**/alembic/**"]
+    actions: [write, delete]
+    decision: require_approval
+    reason: database migration or schema change
+
+  - id: approve-infra
+    match:
+      paths:
+        - "**/*.tf"
+        - "**/*.tfvars"
+        - "**/terraform/**"
+        - "**/k8s/**"
+        - "**/kubernetes/**"
+        - "**/helm/**"
+        - "**/charts/**"
+        - "**/Dockerfile*"
+        - "**/docker-compose*.yml"
+        - "**/docker-compose*.yaml"
+        - "**/compose*.yaml"
+        - "**/ansible/**"
+        - "**/pulumi/**"
+        - "**/serverless.yml"
+    actions: [write, delete]
+    decision: require_approval
+    reason: infrastructure definition
+
+  - id: approve-ci-cd
+    match:
+      paths:
+        - "**/.github/workflows/**"
+        - "**/.github/actions/**"
+        - "**/.gitlab-ci.yml"
+        - "**/.circleci/**"
+        - "**/Jenkinsfile"
+        - "**/azure-pipelines.yml"
+        - "**/.buildkite/**"
+        - "**/CODEOWNERS"
+    actions: [write, delete]
+    decision: require_approval
+    reason: CI/CD configuration
+
+  - id: approve-auth-security-config
+    match:
+      paths:
+        - "**/{auth,security,iam,rbac}/**/*.{yml,yaml,json,toml,ini,conf}"
+        - "**/*{auth,security,iam,rbac,permissions,policy}*.{yml,yaml,json,toml,ini,conf}"
+        - "**/.gitattributes"
+        - "**/.gitmodules"
+    actions: [write, delete]
+    decision: require_approval
+    reason: authentication/security configuration
+
+  - id: approve-large-lockfile-changes
+    match:
+      paths:
+        - "**/Cargo.lock"
+        - "**/package-lock.json"
+        - "**/yarn.lock"
+        - "**/pnpm-lock.yaml"
+        - "**/bun.lockb"
+        - "**/poetry.lock"
+        - "**/uv.lock"
+        - "**/Pipfile.lock"
+        - "**/go.sum"
+        - "**/Gemfile.lock"
+        - "**/composer.lock"
+      min_lines_changed: 500
+    actions: [write]
+    decision: require_approval
+    reason: large dependency lockfile change
+
+  - id: approve-large-deletes
+    match:
+      min_deleted_files: 50
+    actions: [diff_summary]
+    decision: require_approval
+    reason: many files deleted
+
+  - id: approve-large-line-deletes
+    match:
+      min_deleted_lines: 3000
+    actions: [diff_summary]
+    decision: require_approval
+    reason: many lines deleted
+
+  - id: approve-remote-push
+    actions: [git_push]
+    decision: require_approval
+    reason: pushing a branch to a remote
+
+  - id: approve-push-commands
+    match:
+      command_tags: [git_push]
+    decision: require_approval
+    reason: pushing a branch to a remote
+
+  - id: approve-pr-creation
+    actions: [github_pr]
+    decision: require_approval
+    reason: opening a pull request is visible to others
+
+  - id: approve-infra-commands
+    match:
+      command_tags: [terraform_apply, kubectl_mutation, deploy]
+    decision: require_approval
+    reason: infrastructure or deployment command
+
+  - id: approve-history-rewrite
+    match:
+      command_tags: [git_history_rewrite]
+    decision: require_approval
+
+  - id: approve-network-commands
+    match:
+      command_tags: [network]
+    decision: require_approval
+    reason: explicit network access from a workflow command
+
+  - id: approve-privilege-escalation
+    match:
+      command_tags: [privilege_escalation]
+    decision: require_approval
+
+  - id: approve-shell-mode
+    description: Commands executed through a shell are harder to reason about.
+    match:
+      shell: true
+    actions: [command]
+    decision: require_approval
+    reason: "workflow step uses shell: true"

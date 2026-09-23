@@ -1,0 +1,24 @@
+# Project rules are ADDED to the built-in default policy; they can tighten,
+# never loosen, what the default denies.
+version: 1
+name: qj-api
+rules:
+  - id: approve-public-api
+    description: Changes to the public HTTP API need a human.
+    match:
+      paths: ["src/api/**", "openapi.yaml"]
+    actions: [write, delete]
+    decision: require_approval
+    reason: public API surface
+
+  - id: deny-vendored
+    match:
+      paths: ["vendor/**"]
+    actions: [write, delete]
+    decision: deny
+    reason: vendored code is updated by a separate process
+
+  - id: approve-db-tooling
+    match:
+      commands: ["*sqlx migrate*", "*diesel migration*"]
+    decision: require_approval

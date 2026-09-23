@@ -1,0 +1,63 @@
+# herdr-orchestrator — governed multi-agent workflows for Herdr.
+#
+# Everything below runs ONE binary built from this repository
+# (./target/release/herdr-orchestrator). There is no download step, no
+# postinstall script and no network access at install time beyond cargo
+# fetching the crates pinned in Cargo.lock.
+id = "jpolec.herdr-orchestrator"
+name = "Herdr Orchestrator"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Tasks → workflows → agents in Herdr panes → checks, retries, review, policy, approvals, audit, draft PR"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release", "--locked"]
+
+# Starts the engine daemon only if there is queued or interrupted work;
+# the daemon reconciles interrupted runs on start (see docs/RECOVERY.md).
+[[startup]]
+command = ["./target/release/herdr-orchestrator", "hook", "startup"]
+
+[[actions]]
+id = "open"
+title = "Orchestrator: open dashboard"
+contexts = ["workspace"]
+command = ["./target/release/herdr-orchestrator", "hook", "open"]
+
+[[actions]]
+id = "new-task"
+title = "Orchestrator: new task"
+contexts = ["workspace"]
+command = ["./target/release/herdr-orchestrator", "hook", "new-task"]
+
+[[actions]]
+id = "approvals"
+title = "Orchestrator: pending approvals"
+contexts = ["workspace"]
+command = ["./target/release/herdr-orchestrator", "hook", "open", "--view", "approvals"]
+
+# Wake-ups only: the hook forwards to an already running daemon and never
+# starts one. Agent state changes are NOT hooked; run drivers use Herdr's
+# server-side `agent.wait` instead.
+[[events]]
+on = "pane.closed"
+command = ["./target/release/herdr-orchestrator", "hook", "event"]
+
+[[events]]
+on = "worktree.removed"
+command = ["./target/release/herdr-orchestrator", "hook", "event"]
+
+[[panes]]
+id = "dashboard"
+title = "Orchestrator"
+placement = "overlay"
+command = ["./target/release/herdr-orchestrator", "ui"]
+
+[[panes]]
+id = "new-task"
+title = "New orchestrator task"
+placement = "popup"
+width = "80%"
+height = "70%"
+command = ["./target/release/herdr-orchestrator", "ui", "--new-task"]

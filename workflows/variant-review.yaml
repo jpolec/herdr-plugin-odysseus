@@ -1,0 +1,45 @@
+# variant-review: run with `--variants N` (e.g. `task create --variants 3
+# --variant-runners codex,codex,claude`). Every variant runs this workflow
+# in its own worktree and branch:
+#
+#            ┌→ variant A ─┐
+#   task ────┼→ variant B ─┼→ compare (`task compare <id>`) → human selects
+#            └→ variant C ─┘
+#
+# The review agent gives structured findings; it does not pick a winner.
+# Selection stays explicit: `task select <task> <run>`, then `run pr <run>`.
+version: 1
+name: variant-review
+description: Independent implementations per variant, tested and reviewed for side-by-side comparison.
+defaults:
+  timeout: 45m
+
+steps:
+  - id: implement
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 1
+
+  - id: review
+    type: agent
+    runner: claude
+    skill: code-review
+    output: review
+    prompt: |
+      Review this candidate implementation of the task below. Several
+      independent candidates exist; judge this one on its own merits.
+      Inspect it with `git diff {{base_sha}}`.
+
+      Task:
+      {{task}}

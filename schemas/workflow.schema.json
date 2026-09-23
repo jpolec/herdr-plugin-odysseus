@@ -1,0 +1,574 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jpolec/herdr-plugin-odysseus/schemas/workflow.schema.json",
+  "title": "herdr-orchestrator workflow",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "name",
+    "steps"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runner": {
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "prompt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "agent"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "runner": {
+                "type": "string"
+              },
+              "skill": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Constrained template: {{task}}, {{task_title}}, {{task.id}}, {{run.id}}, {{repo.root}}, {{worktree.path}}, {{branch}}, {{base_sha}}, {{previous.output}}, {{feedback}}, {{output_file}}, {{step.id}}, {{step.<id>.output}}. No expressions."
+              },
+              "output": {
+                "enum": [
+                  "summary",
+                  "review"
+                ],
+                "default": "summary"
+              },
+              "gate": {
+                "type": "boolean",
+                "description": "review only: non-approving verdict fails the step"
+              },
+              "commit": {
+                "type": "boolean"
+              },
+              "policy_check": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "command"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "command"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "command": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "argv array executed directly (no shell). Untrusted template vars are rejected."
+              },
+              "shell": {
+                "type": "boolean",
+                "default": false
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "pattern": "^[A-Za-z0-9_]+$"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "check"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "check": {
+                "enum": [
+                  "tests",
+                  "lint",
+                  "security"
+                ]
+              },
+              "command": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "argv array executed directly (no shell). Untrusted template vars are rejected."
+              },
+              "shell": {
+                "type": "boolean"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "pattern": "^[A-Za-z0-9_]+$"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "approval"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "reason": {
+                "type": "string",
+                "description": "Constrained template: {{task}}, {{task_title}}, {{task.id}}, {{run.id}}, {{repo.root}}, {{worktree.path}}, {{branch}}, {{base_sha}}, {{previous.output}}, {{feedback}}, {{output_file}}, {{step.id}}, {{step.<id>.output}}. No expressions."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "policy"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "git"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "action": {
+                "enum": [
+                  "commit",
+                  "push"
+                ],
+                "default": "commit"
+              },
+              "message": {
+                "type": "string",
+                "description": "Constrained template: {{task}}, {{task_title}}, {{task.id}}, {{run.id}}, {{repo.root}}, {{worktree.path}}, {{branch}}, {{base_sha}}, {{previous.output}}, {{feedback}}, {{output_file}}, {{step.id}}, {{step.<id>.output}}. No expressions."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,40}$"
+              },
+              "type": {
+                "const": "github_pr"
+              },
+              "timeout": {
+                "description": "Duration: 45m, 2h, 1h30m, 90s, 500ms or seconds",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "continue_on_failure": {
+                "type": "boolean"
+              },
+              "on_failure": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "retry_step"
+                ],
+                "properties": {
+                  "retry_step": {
+                    "type": "string"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 1
+                  },
+                  "feedback": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              },
+              "draft": {
+                "type": "boolean"
+              },
+              "title": {
+                "type": "string",
+                "description": "Constrained template: {{task}}, {{task_title}}, {{task.id}}, {{run.id}}, {{repo.root}}, {{worktree.path}}, {{branch}}, {{base_sha}}, {{previous.output}}, {{feedback}}, {{output_file}}, {{step.id}}, {{step.<id>.output}}. No expressions."
+              },
+              "body": {
+                "type": "string",
+                "description": "Constrained template: {{task}}, {{task_title}}, {{task.id}}, {{run.id}}, {{repo.root}}, {{worktree.path}}, {{branch}}, {{base_sha}}, {{previous.output}}, {{feedback}}, {{output_file}}, {{step.id}}, {{step.<id>.output}}. No expressions."
+              },
+              "base": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
