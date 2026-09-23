@@ -291,6 +291,7 @@ See [CONTRIBUTING](CONTRIBUTING.md).
 [Security model](docs/SECURITY_MODEL.md) ·
 [Threat model](docs/THREAT_MODEL.md) ·
 [Upstream requests](docs/UPSTREAM_REQUESTS.md) ·
+[Roadmap](docs/ROADMAP.md) ·
 [Security policy](SECURITY.md) ·
 [Changelog](CHANGELOG.md)
 
