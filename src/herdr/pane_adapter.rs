@@ -48,12 +48,14 @@ impl SocketHerdr {
         self.client.request_field("pane.list", json!({}), "panes", None)
     }
 
-    pub(super) fn pane_read(&self, pane_id: &str, lines: u32) -> HResult<String> {
-        let r = self.client.request(
-            "pane.read",
-            json!({"pane_id": pane_id, "source": "recent-unwrapped", "lines": lines, "format": "text", "strip_ansi": true}),
-            None,
-        )?;
+    /// `source` is a Herdr `ReadSource`: `visible`, `recent`,
+    /// `recent_unwrapped` or `detection` (underscore, unlike the CLI flag).
+    pub(super) fn pane_read(&self, pane_id: &str, source: &str, lines: Option<u32>) -> HResult<String> {
+        let mut params = json!({"pane_id": pane_id, "source": source, "format": "text", "strip_ansi": true});
+        if let Some(n) = lines {
+            params["lines"] = json!(n);
+        }
+        let r = self.client.request("pane.read", params, None)?;
         Ok(r.pointer("/read/text").and_then(Value::as_str).unwrap_or_default().to_string())
     }
 

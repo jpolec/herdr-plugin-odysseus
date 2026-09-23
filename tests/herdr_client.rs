@@ -91,7 +91,12 @@ fn socket_client_speaks_the_protocol() {
     let tc = find("tab.create");
     assert_eq!(tc["params"]["focus"], false, "never steal the user's focus");
     let rd = find("pane.read");
-    assert_eq!(rd["params"]["source"], "recent-unwrapped");
+    assert_eq!(rd["params"]["source"], "recent_unwrapped");
+    assert_eq!(h.read_screen("w1:p2").unwrap(), "hello\n");
+    let reqs = log.lock().unwrap().clone();
+    // Every request we sent must match Herdr 0.9.0's published schema.
+    let problems = schema_problems(&reqs);
+    assert!(problems.is_empty(), "requests do not match the Herdr API schema:\n{}", problems.join("\n"));
     assert!(reqs.iter().all(|r| r["id"].as_str().unwrap().starts_with("orch-")));
 }
 
@@ -99,4 +104,96 @@ fn socket_client_speaks_the_protocol() {
 fn unreachable_socket_is_reported_as_unavailable() {
     let h = SocketHerdr::new("/tmp/definitely-not-a-herdr-socket.sock");
     assert!(matches!(h.ping(), Err(HerdrError::Unavailable(_))));
+}
+
+/// Check method names, parameter names and enum values against the schema
+/// printed by `herdr api schema --json` (Herdr 0.9.0, protocol 22). This is
+/// what the mock server cannot know on its own: it would happily accept a
+/// misspelled enum such as `recent-unwrapped` (a real bug this caught).
+fn schema_problems(reqs: &[Value]) -> Vec<String> {
+    let schema: Value = serde_json::from_str(include_str!("fixtures/herdr-api-0.9.0.schema.json")).unwrap();
+    let request = &schema["schemas"]["request"];
+    let defs = &request["$defs"];
+    let resolve = |v: &Value| -> Value {
+        match v.get("$ref").and_then(Value::as_str) {
+            Some(r) => defs[r.rsplit('/').next().unwrap()].clone(),
+            None => v.clone(),
+        }
+    };
+    // method name -> params schema
+    let mut methods = std::collections::HashMap::new();
+    fn walk(v: &Value, out: &mut std::collections::HashMap<String, Value>) {
+        match v {
+            Value::Object(o) => {
+                if let Some(m) = o.get("properties").and_then(|p| p.get("method")).and_then(|m| m.get("const")).and_then(Value::as_str) {
+                    out.insert(m.to_string(), o["properties"]["params"].clone());
+                }
+                o.values().for_each(|x| walk(x, out));
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    walk(request, &mut methods);
+    let enum_of = |prop: &Value| -> Option<Vec<Value>> {
+        let p = resolve(prop);
+        if let Some(e) = p.get("enum").and_then(Value::as_array) {
+            return Some(e.clone());
+        }
+        for alt in p.get("anyOf").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(e) = resolve(alt).get("enum").and_then(Value::as_array) {
+                return Some(e.clone());
+            }
+        }
+        None
+    };
+    let mut problems = vec![];
+    for r in reqs {
+        let m = r["method"].as_str().unwrap();
+        let Some(ps) = methods.get(m) else {
+            problems.push(format!("unknown method {m}"));
+            continue;
+        };
+        let ps = resolve(ps);
+        let props = ps.get("properties").cloned().unwrap_or(Value::Null);
+        for (k, v) in r["params"].as_object().into_iter().flatten() {
+            let Some(prop) = props.get(k) else {
+                problems.push(format!("{m}: unknown parameter `{k}`"));
+                continue;
+            };
+            let prop = resolve(prop);
+            let check = |val: &Value, schema_prop: &Value, problems: &mut Vec<String>| {
+                if let Some(e) = enum_of(schema_prop) {
+                    if !e.contains(val) {
+                        problems.push(format!("{m}.{k}: {val} is not one of {e:?}"));
+                    }
+                }
+            };
+            match (v, prop.get("items")) {
+                (Value::Array(items), Some(item_schema)) => items.iter().for_each(|x| check(x, item_schema, &mut problems)),
+                _ => check(v, &prop, &mut problems),
+            }
+            // Nested objects one level deep (e.g. agent.prompt wait.until).
+            if let (Value::Object(o), Some(inner)) = (v, resolve(&prop).get("anyOf").and_then(Value::as_array).and_then(|a| a.iter().map(&resolve).find(|x| x.get("properties").is_some()))) {
+                for (ik, iv) in o {
+                    match inner["properties"].get(ik) {
+                        None => problems.push(format!("{m}.{k}: unknown field `{ik}`")),
+                        Some(ip) => match (iv, resolve(ip).get("items")) {
+                            (Value::Array(items), Some(is)) => {
+                                for x in items {
+                                    if let Some(e) = enum_of(is) {
+                                        if !e.contains(x) {
+                                            problems.push(format!("{m}.{k}.{ik}: {x} is not one of {e:?}"));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
+                    }
+                }
+            }
+        }
+    }
+    problems
 }

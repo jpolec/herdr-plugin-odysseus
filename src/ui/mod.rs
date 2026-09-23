@@ -166,7 +166,7 @@ fn load(state: &mut State, ctx: &crate::engine::EngineCtx) {
             .and_then(|a| a.pane_id.clone())
             .and_then(|p| {
                 use crate::herdr::HerdrApi;
-                crate::herdr::SocketHerdr::discover(None)?.read_pane(&p, 60).ok()
+                crate::herdr::SocketHerdr::discover(None)?.read_screen(&p).ok()
             })
             .map(|t| t.lines().map(String::from).collect())
             .unwrap_or_else(|| vec!["(the agent pane is not reachable)".into()]);

@@ -80,7 +80,10 @@ impl HerdrApi for SocketHerdr {
         self.pane_list()
     }
     fn read_pane(&self, pane_id: &str, lines: u32) -> HResult<String> {
-        self.pane_read(pane_id, lines)
+        self.pane_read(pane_id, "recent_unwrapped", Some(lines))
+    }
+    fn read_screen(&self, pane_id: &str) -> HResult<String> {
+        self.pane_read(pane_id, "visible", None)
     }
     fn close_pane(&self, pane_id: &str) -> HResult<()> {
         self.pane_close(pane_id)

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6] - 2026-09-23
+
+### Fixed
+- Reading agent panes always failed: the Herdr API expects `recent_unwrapped`, not the CLI spelling `recent-unwrapped`. The "agent is asking" view showed "not reachable" and agent transcripts in logs were empty. The agent view now reads the visible screen.
+
+### Added
+- Every request the Herdr client sends in tests is checked against Herdr 0.9.0's published API schema (`tests/fixtures/herdr-api-0.9.0.schema.json`): method names, parameter names and enum values.
+
 ## [0.1.5] - 2026-09-23
 
 ### Added

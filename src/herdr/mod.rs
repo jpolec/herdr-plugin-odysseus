@@ -74,7 +74,12 @@ pub trait HerdrApi: Send + Sync {
     fn report_metadata(&self, pane_id: &str, title: &str, tokens: &BTreeMap<String, Option<String>>) -> HResult<()>;
     fn get_pane(&self, pane_id: &str) -> HResult<Option<PaneInfo>>;
     fn list_panes(&self) -> HResult<Vec<PaneInfo>>;
+    /// Recent scrollback (unwrapped), for transcripts.
     fn read_pane(&self, pane_id: &str, lines: u32) -> HResult<String>;
+    /// The currently visible screen (e.g. an agent's question and menu).
+    fn read_screen(&self, pane_id: &str) -> HResult<String> {
+        self.read_pane(pane_id, 60)
+    }
     fn close_pane(&self, pane_id: &str) -> HResult<()>;
     fn focus_pane(&self, pane_id: &str) -> HResult<()>;
     fn process_info(&self, pane_id: &str) -> HResult<ProcessInfo>;
