@@ -34,3 +34,13 @@ jobs:
         run: cargo test --all --locked
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
+
+  msrv:
+    # Keep Cargo.toml's rust-version honest: build on exactly that toolchain.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - name: Build on the minimum supported Rust version
+        run: cargo build --locked

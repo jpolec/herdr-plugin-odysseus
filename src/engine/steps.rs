@@ -209,7 +209,12 @@ impl<'a> RunDriver<'a> {
             e.intent = Some(format!("run agent {runner_name} ({:?}) in {}", profile.mode, worktree.display()));
             e.log_path = Some(log_path.clone());
         }
-        let _ = std::fs::remove_file(&output_file); // never read a stale result
+        // Result files are per execution id, so only a *fresh* execution may
+        // clear one. A resumed execution must keep it: the agent may have
+        // finished while the engine was down.
+        if resumed.is_none() {
+            let _ = std::fs::remove_file(&output_file);
+        }
         let head_before = crate::git::head_sha(&worktree).ok();
         let slot = match self.ctx.agent_slots.acquire(&self.cancel) {
             Some(s) => s,

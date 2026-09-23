@@ -1,8 +1,8 @@
 [package]
 name = "herdr-orchestrator"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 description = "Governed multi-agent workflow orchestration plugin for Herdr"
 license = "MIT"
 repository = "https://github.com/jpolec/herdr-plugin-odysseus"

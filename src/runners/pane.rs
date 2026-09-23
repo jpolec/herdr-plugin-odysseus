@@ -18,6 +18,16 @@ use super::*;
 use crate::herdr::{agent_name, AgentStatus, HerdrApi, HerdrError};
 
 const CHUNK: Duration = Duration::from_secs(10);
+
+/// Outcome of double-checking an agent that looks finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Settle {
+    Done,
+    Working,
+    Cancelled,
+    TimedOut,
+    Lost,
+}
 const SETTLED: &[AgentStatus] = &[AgentStatus::Idle, AgentStatus::Done, AgentStatus::Blocked];
 const NOT_BLOCKED: &[AgentStatus] = &[AgentStatus::Idle, AgentStatus::Done, AgentStatus::Working];
 
@@ -333,7 +343,7 @@ impl AgentRunner for PaneRunner {
         cancel: &CancelToken,
         events: &mut dyn FnMut(AgentEvent),
     ) -> Result<AgentOutcome> {
-        self.wait_settled(req, b, deadline, cancel, events)
+        self.wait_until_done(req, b, deadline, cancel, events)
     }
 
     fn interrupt(&self, b: &AgentBinding) -> Result<()> {
@@ -392,8 +402,11 @@ impl PaneRunner {
                 b.prompt_sent = true;
                 events(AgentEvent::PromptSent);
                 b.last_status = Some(info.agent_status.as_str().into());
-                if info.agent_status.is_settled() && self.confirm_settled(req, &target, deadline, cancel) {
-                    return Ok(self.outcome(req, b, AgentEnd::Completed));
+                if info.agent_status.is_settled() {
+                    match self.confirm_settled(req, &target, deadline, cancel)? {
+                        Settle::Working => {}
+                        other => return Ok(self.settle_outcome(req, b, other)),
+                    }
                 }
             }
             Err(e) if e.is_wait_timeout() => {
@@ -422,34 +435,78 @@ impl PaneRunner {
             }
             Err(e) => return Err(e.into()),
         }
-        // The result file is the real "I am finished" signal. `idle` without
-        // it is only accepted after the agent stays idle for a whole settle
-        // window (real-run finding: Claude flickers to idle between tool
-        // calls and permission prompts, and a run was committed mid-work).
+        self.wait_until_done(req, b, deadline, cancel, events)
+    }
+
+    /// Wait until the agent is really finished. The result file is the
+    /// "I am finished" signal; `idle` without it is accepted only after the
+    /// agent stays idle for a whole settle window (real-run finding: Claude
+    /// flickers to idle between tool calls and permission prompts). Used by
+    /// both a fresh prompt and a reattach after restart.
+    fn wait_until_done(
+        &self,
+        req: &AgentRequest,
+        b: &mut AgentBinding,
+        deadline: Instant,
+        cancel: &CancelToken,
+        events: &mut dyn FnMut(AgentEvent),
+    ) -> Result<AgentOutcome> {
+        let target = Self::target(b)?;
         loop {
             let out = self.wait_settled(req, b, deadline, cancel, events)?;
-            if out.end != AgentEnd::Completed || out.output_file_text.is_some() || self.confirm_settled(req, &target, deadline, cancel) {
-                return Ok(self.outcome(req, b, out.end));
+            if out.end != AgentEnd::Completed || out.output_file_text.is_some() {
+                return Ok(out);
+            }
+            match self.confirm_settled(req, &target, deadline, cancel)? {
+                Settle::Working => continue,
+                other => return Ok(self.settle_outcome(req, b, other)),
             }
         }
     }
 
+    fn settle_outcome(&self, req: &AgentRequest, b: &AgentBinding, s: Settle) -> AgentOutcome {
+        let end = match s {
+            Settle::Done => AgentEnd::Completed,
+            Settle::Cancelled => {
+                let _ = self.interrupt(b);
+                AgentEnd::Cancelled
+            }
+            Settle::TimedOut => {
+                if self.interrupt_on_timeout {
+                    let _ = self.interrupt(b);
+                }
+                AgentEnd::TimedOut
+            }
+            Settle::Lost => AgentEnd::Lost(self.lost_reason(b)),
+            Settle::Working => unreachable!("callers keep waiting while the agent works"),
+        };
+        self.outcome(req, b, end)
+    }
+
     /// A settled state without a result file is not trusted yet: the agent
-    /// must stay idle for a whole `settle_window`. Returns `true` when it
-    /// did (or wrote its result file), `false` as soon as it works again.
-    fn confirm_settled(&self, req: &AgentRequest, target: &str, deadline: Instant, cancel: &CancelToken) -> bool {
-        let window_end = (Instant::now() + self.settle_window).min(deadline);
+    /// must stay idle for a whole `settle_window`. Cancellation, the step
+    /// deadline and a vanished agent are reported as such, never as done;
+    /// errors talking to Herdr propagate.
+    fn confirm_settled(&self, req: &AgentRequest, target: &str, deadline: Instant, cancel: &CancelToken) -> Result<Settle> {
+        let window_end = Instant::now() + self.settle_window;
         loop {
             if read_output_file(&req.output_file).is_some() {
-                return true;
+                return Ok(Settle::Done);
             }
-            if Instant::now() >= window_end || cancel.is_cancelled() {
-                return true;
+            if cancel.is_cancelled() {
+                return Ok(Settle::Cancelled);
             }
-            match self.herdr.get_agent(target) {
-                Ok(Some(i)) if matches!(i.agent_status, AgentStatus::Working | AgentStatus::Blocked) => return false,
-                Ok(Some(_)) => {}
-                _ => return true,
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(Settle::TimedOut);
+            }
+            if now >= window_end {
+                return Ok(Settle::Done);
+            }
+            match self.herdr.get_agent(target)? {
+                Some(i) if matches!(i.agent_status, AgentStatus::Working | AgentStatus::Blocked) => return Ok(Settle::Working),
+                Some(_) => {}
+                None => return Ok(Settle::Lost),
             }
             std::thread::sleep(Duration::from_millis(500));
         }

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.9] - 2026-09-23
+
+Fixes from an external code review, each with a regression test that fails on 0.1.8.
+
+### Fixed
+- Resuming an execution after a restart deleted its result file, so work an agent finished while the engine was down was lost (a written `approved` review became a failed run). Only a fresh execution clears its result file.
+- Reattaching to an agent after a restart skipped the completion check and took a momentary `idle` as done. Fresh prompts and reattaches now share one completion check (result file, or idle for a whole settle window).
+- The completion check reported "done" on cancellation, on the step deadline and when the agent vanished. These are now a cancel, a timeout and a lost agent; errors talking to Herdr propagate.
+- `rust-version` said 1.82 but dependencies (ratatui 0.30, time) need 1.88. Set to 1.88, and CI now builds on exactly that toolchain.
+
 ## [0.1.8] - 2026-09-23
 
 ### Fixed

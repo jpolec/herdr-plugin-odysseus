@@ -748,3 +748,101 @@ fn idle_flicker_mid_task_does_not_end_the_step() {
     assert!(!r.steps[0].parse_failed);
     assert_eq!(mock.prompts(&mock.agent_names()[0]).len(), 1, "no reminder while the agent is still working");
 }
+
+/// Run until the implement/review step has a live, prompted agent, then
+/// simulate an engine crash at that moment (restore the durable snapshot).
+fn crash_while_agent_works(h: &mut Harness, tid: &str, step: &str) -> Run {
+    let t = tid.to_string();
+    let st = step.to_string();
+    assert!(h.until(Duration::from_secs(20), |h| h.runs_of(&t).first().and_then(|r| r.latest_exec(&st).cloned()).is_some_and(|e| e.agent.as_ref().is_some_and(|a| a.prompt_sent) && e.status == StepStatus::Running)));
+    let run = h.runs_of(tid)[0].clone();
+    let doc = h.ctx.store.layout.runs_dir().join(format!("{}.json", run.run_id));
+    let snapshot = std::fs::read(&doc).unwrap();
+    herdr_orchestrator::engine::request_cancel(&h.ctx, &run.run_id, "crash sim", None).unwrap();
+    assert!(h.until(Duration::from_secs(20), |h| h.sched.active.is_empty()));
+    std::fs::write(&doc, snapshot).unwrap();
+    h.ctx.store.update_control(&run.run_id, |c| *c = Default::default()).unwrap();
+    run
+}
+
+#[test]
+fn resume_keeps_a_result_written_while_the_engine_was_down() {
+    // Review finding P1: resuming the same execution deleted its result file.
+    let slot: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> = Arc::new(std::sync::Mutex::new(None));
+    let s2 = slot.clone();
+    let mock = Arc::new(MockHerdr::new(Arc::new(move |c: &herdr_orchestrator::herdr::mock::PromptCall| {
+        *s2.lock().unwrap() = Some(output_path(&c.prompt));
+        MockReaction::Hang
+    })));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
+    h.workflow("rev", "  - id: review\n    type: agent\n    output: review\n    prompt: r\n");
+    let t = h.task("Review during outage", "rev", Some("claude"));
+    let run = crash_while_agent_works(&mut h, &t.task_id, "review");
+    // While the engine is down the agent finishes and writes its verdict.
+    let out = slot.lock().unwrap().clone().unwrap();
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(&out, r#"{"verdict":"approved","summary":"ok","findings":[]}"#).unwrap();
+    let name = run.latest_exec("review").unwrap().agent.clone().unwrap().agent_name.unwrap();
+    mock.set_agent_status(&name, AgentStatus::Idle);
+    herdr_orchestrator::recovery::recover_all(&h.ctx).unwrap();
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    assert_eq!(r.latest_exec("review").unwrap().structured.as_ref().unwrap()["verdict"], "approved");
+}
+
+#[test]
+fn reattach_does_not_trust_a_brief_idle() {
+    // Review finding P1: attach() after a restart skipped the result-file /
+    // sustained-idle check and accepted a momentary idle as done.
+    let slot: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> = Arc::new(std::sync::Mutex::new(None));
+    let s2 = slot.clone();
+    let mock = Arc::new(MockHerdr::new(Arc::new(move |c: &herdr_orchestrator::herdr::mock::PromptCall| {
+        *s2.lock().unwrap() = Some(output_path(&c.prompt));
+        MockReaction::Hang
+    })));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
+    let t = h.task("Reattach flicker", "quick-task", Some("claude"));
+    let run = crash_while_agent_works(&mut h, &t.task_id, "implement");
+    let name = run.latest_exec("implement").unwrap().agent.clone().unwrap().agent_name.unwrap();
+    let wt = run.git.worktree_path.clone().unwrap();
+    let out = slot.lock().unwrap().clone().unwrap();
+    // After the restart the agent is momentarily idle, then keeps working.
+    mock.set_agent_status(&name, AgentStatus::Idle);
+    let m2 = mock.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        m2.set_agent_status(&name, AgentStatus::Working);
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        std::fs::write(wt.join("late.txt"), "late\n").unwrap();
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, r#"{"summary":"done","status":"done"}"#).unwrap();
+        m2.set_agent_status(&name, AgentStatus::Idle);
+    });
+    herdr_orchestrator::recovery::recover_all(&h.ctx).unwrap();
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    let files: Vec<_> = r.diff_stat.as_ref().unwrap().files.iter().map(|f| f.path.clone()).collect();
+    assert!(files.contains(&"late.txt".to_string()), "late work must be committed: {files:?}");
+}
+
+#[test]
+fn cancel_during_the_settle_check_is_a_cancel_not_a_completion() {
+    // Review finding P2: confirm_settled() reported "done" on cancellation.
+    // Exercised on the reattach path, which has no reminder to mask it.
+    let mock = Arc::new(MockHerdr::new(Arc::new(|_c: &herdr_orchestrator::herdr::mock::PromptCall| MockReaction::Hang)));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.project_file("config.yaml", "herdr:\n  settle_window: 30s\n  close_panes_on_success: false\n");
+    let t = h.task("Cancel while settling", "quick-task", Some("claude"));
+    let run = crash_while_agent_works(&mut h, &t.task_id, "implement");
+    let name = run.latest_exec("implement").unwrap().agent.clone().unwrap().agent_name.unwrap();
+    mock.set_agent_status(&name, AgentStatus::Idle); // idle, no result file: must be double-checked
+    herdr_orchestrator::recovery::recover_all(&h.ctx).unwrap();
+    let id = run.run_id.clone();
+    assert!(h.until(Duration::from_secs(10), |h| h.ctx.store.load_run(&id).unwrap().status == RunStatus::Running));
+    std::thread::sleep(Duration::from_millis(1500)); // now inside the 30s settle check
+    herdr_orchestrator::engine::request_cancel(&h.ctx, &run.run_id, "user", None).unwrap();
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Cancelled, "{:?}", r.status_reason);
+}
