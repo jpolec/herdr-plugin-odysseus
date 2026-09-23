@@ -178,8 +178,8 @@ fn schema_problems(reqs: &[Value]) -> Vec<String> {
                 for (ik, iv) in o {
                     match inner["properties"].get(ik) {
                         None => problems.push(format!("{m}.{k}: unknown field `{ik}`")),
-                        Some(ip) => match (iv, resolve(ip).get("items")) {
-                            (Value::Array(items), Some(is)) => {
+                        Some(ip) => {
+                            if let (Value::Array(items), Some(is)) = (iv, resolve(ip).get("items")) {
                                 for x in items {
                                     if let Some(e) = enum_of(is) {
                                         if !e.contains(x) {
@@ -188,8 +188,7 @@ fn schema_problems(reqs: &[Value]) -> Vec<String> {
                                     }
                                 }
                             }
-                            _ => {}
-                        },
+                        }
                     }
                 }
             }
