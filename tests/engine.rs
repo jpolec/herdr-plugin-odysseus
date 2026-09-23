@@ -659,3 +659,26 @@ fn agent_that_never_acts_fails_instead_of_passing_empty() {
     assert!(r.status_reason.as_deref().unwrap().contains("without writing its result file"), "{:?}", r.status_reason);
     assert!(h.events(&r.run_id).contains(&"agent_no_result".to_string()));
 }
+
+#[test]
+fn early_idle_after_prompt_is_not_trusted() {
+    // Real-run finding: Herdr reported Claude idle in the same second as the
+    // prompt; the review file appeared 48s later and was ignored.
+    let mock = Arc::new(MockHerdr::new(Arc::new(|c: &herdr_orchestrator::herdr::mock::PromptCall| {
+        let out = output_path(&c.prompt);
+        let cwd = c.cwd.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            herdr_orchestrator::runners::fake::perform("review-approve", &cwd, &out, "review", 1).unwrap();
+        });
+        MockReaction::Finish // idle immediately, before the work is done
+    })));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.workflow("rev", "  - id: review\n    type: agent\n    output: review\n    prompt: r\n");
+    let t = h.task("Slow reviewer", "rev", Some("claude"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    assert!(!r.steps[0].parse_failed, "review result must be picked up");
+    assert_eq!(r.steps[0].structured.as_ref().unwrap()["verdict"], "approved");
+    assert_eq!(mock.prompts(&mock.agent_names()[0]).len(), 1, "no reminder needed");
+}

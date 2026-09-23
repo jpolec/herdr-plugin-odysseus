@@ -245,6 +245,7 @@ pub fn runner_factory(ctx: &EngineCtx, cfg: &LoadedConfig) -> crate::runners::Ru
         overrides: cfg.config.runners.clone(),
         interrupt_on_timeout: cfg.config.herdr.interrupt_on_timeout,
         pane_read_lines: cfg.config.output.pane_read_lines,
+        settle_window: cfg.config.herdr.settle_window.as_duration(),
     }
 }
 

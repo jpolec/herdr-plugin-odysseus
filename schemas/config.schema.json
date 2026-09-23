@@ -278,6 +278,19 @@
         },
         "interrupt_on_timeout": {
           "type": "boolean"
+        },
+        "settle_window": {
+          "description": "After a prompt, a 'finished' report without a result file is double-checked for this long",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
         }
       }
     },

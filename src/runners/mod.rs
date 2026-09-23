@@ -169,6 +169,7 @@ pub struct RunnerFactory {
     pub overrides: BTreeMap<String, crate::config::RunnerProfileConfig>,
     pub interrupt_on_timeout: bool,
     pub pane_read_lines: u32,
+    pub settle_window: Duration,
 }
 
 impl RunnerFactory {
@@ -185,7 +186,7 @@ impl RunnerFactory {
             RunnerMode::Shell => Box::new(shell::ShellRunner::new(name)),
             RunnerMode::Headless => Box::new(headless::HeadlessRunner::new(name)),
             RunnerMode::Pane => match &self.herdr {
-                Some(h) => Box::new(pane::PaneRunner::new(name, h.clone(), self.interrupt_on_timeout, self.pane_read_lines)),
+                Some(h) => Box::new(pane::PaneRunner::new(name, h.clone(), self.interrupt_on_timeout, self.pane_read_lines).with_settle_window(self.settle_window)),
                 None if self.herdr_required => {
                     anyhow::bail!("runner {name} needs Herdr (herdr.mode: required) but Herdr is not reachable")
                 }

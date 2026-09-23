@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.3] - 2026-09-23
+
+### Fixed
+- Right after a prompt, Herdr can still report the agent as idle before it has started; the review of the first real run was dropped this way. A "finished" report without a result file is now double-checked for `herdr.settle_window` (default 30s): a result file means done, renewed activity means keep waiting.
+
 ## [0.1.2] - 2026-09-23
 
 Findings from the first real run (the plugin adding CI to its own repository).

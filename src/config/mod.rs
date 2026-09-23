@@ -238,11 +238,14 @@ pub struct HerdrConfig {
     pub close_panes_on_success: bool,
     /// Interrupt (ctrl+c) an agent whose step timed out.
     pub interrupt_on_timeout: bool,
+    /// After a prompt, a "finished" report without a result file is
+    /// double-checked for this long (agents may not have started yet).
+    pub settle_window: HumanDuration,
 }
 
 impl Default for HerdrConfig {
     fn default() -> Self {
-        Self { mode: HerdrMode::Auto, socket: None, notify: true, close_panes_on_success: false, interrupt_on_timeout: true }
+        Self { mode: HerdrMode::Auto, socket: None, notify: true, close_panes_on_success: false, interrupt_on_timeout: true, settle_window: HumanDuration::from_secs(30) }
     }
 }
 

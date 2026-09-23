@@ -48,6 +48,8 @@ impl Harness {
         let repo = init_repo(dir.path());
         let paths = Paths::for_test(dir.path());
         std::fs::create_dir_all(&paths.config_dir).unwrap();
+        // Short settle window keeps pane-runner tests fast.
+        std::fs::write(paths.global_config_file(), "herdr:\n  settle_window: 2s\n").unwrap();
         let mut ctx = EngineCtx::new(paths, herdr, 8).unwrap();
         ctx.poll = Duration::from_millis(20);
         let ctx = Arc::new(ctx);
