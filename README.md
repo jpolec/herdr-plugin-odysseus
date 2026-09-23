@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="herdr-orchestrator — Odysseus: governed multi-agent workflows, native to Herdr" width="100%">
+# herdr-orchestrator
+
+*Odysseus · governed multi-agent workflows, native to Herdr*
 
 <a href="https://github.com/jpolec/herdr-plugin-odysseus/releases"><img src="https://img.shields.io/github/v/tag/jpolec/herdr-plugin-odysseus?style=flat-square&label=version&color=1f6feb" alt="Version"></a>
 <a href="https://github.com/jpolec/herdr-plugin-odysseus/actions/workflows/ci.yml"><img src="https://github.com/jpolec/herdr-plugin-odysseus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -31,6 +33,35 @@ pane, runs your tests, feeds failures back to the same agent, asks Claude to rev
 the diff, checks every changed file against your policy, and stops for your
 approval before it pushes anything.
 
+## See it run
+
+Three short recordings from a fresh Herdr session on a clone of the Herdr repo.
+The agents are the built-in fakes, so nothing here needs an account; with
+Claude or Codex the flow is the same, just slower. Each GIF has an
+[MP4](assets/demo) next to it.
+
+**1. Queue a task from the popup.** `prefix+shift+o` opens the orchestrator.
+`n` opens the form: describe the task, pick a workflow and runner, `ctrl+s`.
+The run gets its own worktree (it appears in the sidebar), `enter` shows the
+steps as they run, and `d` shows the diff it produced.
+
+<img src="assets/demo/new-task.gif" alt="Recording: the orchestrator popup opens, a new task is typed and queued, the run gets its own worktree in the sidebar, its detail view goes from running to succeeded, and the diff is shown" width="100%">
+
+**2. A policy gate.** The task is created from the shell this time. The agent
+adds a database migration, which the default policy never lets through
+silently: the run stops and waits. `a` lists what is waiting for you; the
+approval shows why it stopped, the diff and the rule that matched. `y`
+approves this one action, and the run finishes.
+
+<img src="assets/demo/approval.gif" alt="Recording: a task is created from the command line, the run stops for approval because it touched db/migrations, the approval screen shows the reason, diff and matching policy rule, and approving it lets the run succeed" width="100%">
+
+**3. A full workflow.** `implement-review-demo`: the agent implements, the
+tests fail, the failure goes back to the same agent, the second attempt
+passes, a reviewer approves, and the run asks *"Ship it?"* before it counts
+as done. You only step in at the end.
+
+<img src="assets/demo/workflow.gif" alt="Recording: a run of the implement-review-demo workflow — implement, tests fail, implement again with the failure as feedback, tests pass, review approves, then the approval step is approved and the run succeeds" width="100%">
+
 ## Why
 
 Running several agents in Herdr is easy. Keeping them *honest* is not: each one
@@ -57,8 +88,6 @@ failures back, start a reviewer, check the diff, open the PR. The plugin runs th
 loop for you and enforces your rules along the way.
 
 ## What you get
-
-<img src="assets/dashboard.svg" alt="Illustration of the orchestrator pane: running runs with per-step status, a run waiting for approval, the queue and recent runs" width="100%">
 
 - **One task, one worktree, one branch.** Parallel runs never share a checkout.
   Nothing is force-pushed, reset or deleted while it has uncommitted work.
@@ -93,20 +122,21 @@ Herdr shows what the plugin will run, then builds it with Cargo (about a minute,
 without progress output — let it finish).
 
 **2. Add a key** to `~/.config/herdr/config.toml`, then `herdr server reload-config`
-(on macOS `alt` is the ⌥ Option key: press `ctrl+b`, release, then `⌥O`):
+(press `ctrl+b`, release, then `shift+o`):
 
 ```toml
 [[keys.command]]
-key = "prefix+alt+o"
+key = "prefix+shift+o"
 type = "plugin_action"
 command = "jpolec.herdr-orchestrator.open"
 description = "orchestrator"
 ```
 
 (`prefix+o` is already Herdr's *open notification target*, so the plugin does not
-take it. The plugin never edits your config.)
+take it. `shift` rather than `alt`: on macOS the Option key often reaches Herdr as
+`Esc` + `o`, especially inside tmux. The plugin never edits your config.)
 
-**3. Open a repository workspace in Herdr, press `prefix+alt+o`, then `n`**, type
+**3. Open a repository workspace in Herdr, press `prefix+shift+o`, then `n`**, type
 the task, pick a workflow and runner, `ctrl+s`. The orchestrator opens as a popup
 (like lazygit); `q` closes it and your runs keep going. The agent appears as a new
 tab in a workspace for its worktree — `f` on a run jumps straight to it.

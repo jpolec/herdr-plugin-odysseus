@@ -23,7 +23,7 @@ and against the Herdr source at 0.9.1.
 | Plugin `[[events]]` accept only a fixed list (`workspace.*`, `worktree.*`, `tab.*`, `pane.created/closed/focused/moved/exited/agent_detected/agent_status_changed`). | We hook `pane.closed` and `worktree.removed` as wake-ups only. |
 | Public pane ids persist across restarts, but PTYs don't survive a cold server restart. | Our run state is authoritative for recovery. |
 | `worktree.create` may `remove_dir_all` a leftover checkout directory. | We create worktrees with `git`, then `worktree.open` them. |
-| `prefix+o` is bound to `open_notification_target` by default. | We suggest `prefix+alt+o` and never edit your config. |
+| `prefix+o` is bound to `open_notification_target` by default. | We suggest `prefix+shift+o` and never edit your config. |
 
 ## Socket methods used
 

@@ -42,7 +42,7 @@ watch and take over any agent at any time.
 | Plugin `[[events]]` hooks accept only: `workspace.*` (created, updated, closed, renamed, moved, reordered, focused), `worktree.created/opened/removed`, `tab.*`, `pane.created/closed/focused/moved/exited/agent_detected/agent_status_changed`. | We hook only `pane.closed` and `worktree.removed`, as **wake-ups** for an already running daemon. Agent state is followed with server-side `agent.wait`, so the high-volume `pane.agent_status_changed` is not hooked. |
 | Public pane ids persist across restart (`public_pane_numbers` in the session snapshot) but PTYs/processes do not survive a cold server restart. | Our state file is authoritative for `run → step → pane → agent_session`; recovery reconciles against `pane.list`/`agent.list`. |
 | `worktree.create` may `remove_dir_all` a leftover checkout directory. | We create worktrees with `git` ourselves (explicit base SHA, collision checks) and then ask Herdr to `worktree.open --path` it as a workspace. |
-| `prefix+o` is the default `open_notification_target`. | We do **not** bind it. We document an opt-in `prefix+alt+o` snippet; we never edit the user's `config.toml`. |
+| `prefix+o` is the default `open_notification_target`. | We do **not** bind it. We document an opt-in `prefix+shift+o` snippet; we never edit the user's `config.toml`. |
 | Herdr cannot intercept file writes or commands executed **inside** an agent process. | Enforcement boundary (§8): pre-flight only for orchestrator-owned commands; diff-based checks at step boundaries for agent actions. |
 
 ## 3. Component map
