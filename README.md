@@ -1,75 +1,84 @@
-# herdr-orchestrator (Odysseus)
+<div align="center">
 
-**Governed multi-agent software-development workflows, native to [Herdr](https://github.com/herdrdev/herdr).**
+<img src="assets/banner.svg" alt="herdr-orchestrator — Odysseus: governed multi-agent workflows, native to Herdr" width="100%">
 
-Herdr already runs your coding agents in real terminal panes. `herdr-orchestrator`
-adds the layer above it:
+<a href="https://github.com/jpolec/herdr-plugin-odysseus/releases"><img src="https://img.shields.io/github/v/tag/jpolec/herdr-plugin-odysseus?style=flat-square&label=version&color=1f6feb" alt="Version"></a>
+<a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-%E2%89%A5%200.9.0-1f6feb?style=flat-square" alt="Herdr 0.9.0+"></a>
+<img src="https://img.shields.io/badge/rust-stable-1f6feb?style=flat-square" alt="Rust stable">
+<img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux-supported-1f6feb?style=flat-square" alt="macOS and Linux">
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6feb?style=flat-square" alt="MIT"></a>
+
+**Hand a task to your coding agents, and get back a tested, reviewed, policy-checked draft PR — while every agent stays in a real Herdr pane you can watch and take over.**
+
+</div>
+
+---
+
+## What it is
+
+A [Herdr](https://herdr.dev) plugin that adds a governed workflow layer on top of
+the agents you already run in Herdr:
 
 ```text
-task → workflow → isolated worktree → agent(s) → checks → retry with feedback
-     → independent review → policy → human approval → draft PR → audit record
+task → isolated worktree → agent → tests (retry with feedback) → independent review
+     → policy check → your approval → draft PR → tamper-evident audit record
 ```
 
-Agents run **interactively inside real Herdr panes** (`#12 implement · codex`),
-so you can watch any of them, type into them, or take over at any time. The
-orchestrator never scrapes screens for completion: it uses Herdr's semantic
-agent state (`idle / working / blocked / done`). When an agent asks its human
-something (`blocked`), the orchestrator tells you and waits. It never answers
-for you.
+You type *"Add rate limiting to the webhooks endpoint"*. The orchestrator creates a
+fresh git worktree and branch, starts Codex (or Claude, OpenCode, …) in a new Herdr
+pane, runs your tests, feeds failures back to the same agent, asks Claude to review
+the diff, checks every changed file against your policy, and stops for your
+approval before it pushes anything.
 
-## Features
+## Why
 
-- **Tasks and a local queue**: FIFO, `max_parallel_runs`, `max_parallel_agents`, pause/resume, cancel, retry.
-- **One git worktree and branch per run** (`.herdr-orchestrator/worktrees/<task>-<slug>`, `herdr/<task>-<slug>`). Worktrees are never force-reset or force-pushed, and a dirty worktree is never deleted.
-- **YAML workflows** with `agent`, `command`, `check`, `approval`, `policy`, `git` and `github_pr` steps, plus constrained `{{templates}}`.
-- **Retry loops**: a failed check sends a bounded failure excerpt back to the implementer. With pane agents, the retry goes to the *same live agent*, which keeps its context.
-- **Agent-to-agent handoff**: Codex implements, Claude reviews with validated structured findings, and findings route back for remediation (`gate: true`).
-- **Policy engine** (ALLOW / REQUIRE_APPROVAL / DENY):
-  - pre-flight checks on orchestrator commands
-  - a diff-based gate on everything agents changed
-  - checks on agent launch flags
+Running several agents in Herdr is easy. Keeping them *honest* is not: each one
+works in your checkout, you re-run the tests yourself, you paste failures back by
+hand, you remember which pane was doing what, and nothing stops an agent from
+touching `.env`, a migration or your CI config without you noticing.
 
-  It ships with a conservative default policy: secrets denied, migrations/infra/CI need approval, force-push/`reset --hard`/`terraform destroy` denied, and more.
-- **Human approvals with full context**: changed files, diff stat, checks, policy reasons and the exact action that will happen.
-- **Tamper-evident audit trail**: append-only JSONL per run, SHA-256 hash chained, secrets redacted, `audit verify`.
-- **Variants (tournament mode)**: `--variants 3 --variant-runners codex,codex,claude`, side-by-side `task compare`, explicit human `task select`. No opaque "best" score.
-- **Durable and recoverable**: write-ahead state, a single-instance daemon, and reconciliation after crashes. Nothing ambiguous is re-run blindly.
-- **Provider-neutral runners**: `claude`, `codex`, `opencode`, `gemini`, any Herdr agent kind, headless mode, arbitrary `shell` agents, and deterministic `fake-*` runners for CI.
-- **TUI pane, CLI, dry-run planning and `doctor`.**
-- **Local-first**: no accounts, no SaaS, **no telemetry**. It reuses your logged-in `claude`/`codex`/`gh`.
+herdr-orchestrator does the loop for you and puts the risky moments in front of
+you — without hiding the agents. It never runs them headless behind your back:
+they are ordinary Herdr panes (`#124 implement · codex`) you can read, type into,
+or close.
 
-## Requirements
+## What you get
 
-- Herdr **≥ 0.9.0** on macOS or Linux (Windows is not supported: the socket client is Unix-only)
-- Rust stable (to build; `cargo build --release --locked` runs at install)
-- `git`
-- Optional: `gh` (PRs, issues), `claude`, `codex`, `opencode` (runners)
+<img src="assets/dashboard.svg" alt="Illustration of the orchestrator pane: running runs with per-step status, a run waiting for approval, the queue and recent runs" width="100%">
 
-## Install
+- **One task, one worktree, one branch.** Parallel runs never share a checkout.
+  Nothing is force-pushed, reset or deleted while it has uncommitted work.
+- **Tests with retries that learn.** A failing check sends a trimmed failure log
+  back to the *same live agent*, which keeps its context. Retries are bounded.
+- **A second opinion.** A different agent reviews the diff and returns structured
+  findings; with `gate: true` the findings go back to the implementer to fix.
+- **Your rules, enforced.** A conservative default policy denies secrets,
+  force pushes, `reset --hard`, `terraform destroy`…, and asks you before
+  migrations, infrastructure, CI changes, pushes and PRs. Checked before the
+  orchestrator runs anything *and* on the diff of whatever the agents wrote.
+- **Approvals with context.** Changed files, diff stats, checks, the policy rule
+  that fired and exactly what will happen when you say yes.
+- **Tournament mode.** Run a task ×3 (`codex, codex, claude`), compare the diffs,
+  tests and reviews side by side, and pick one yourself — no opaque "best" score.
+- **An audit trail you can verify.** Every decision in hash-chained JSONL,
+  secrets redacted: `herdr-orchestrator audit verify`.
+- **Survives restarts.** Close the pane, the client, even the engine: runs pick
+  up where they were, and nothing ambiguous is re-run blindly.
+- **Local only.** No account, no SaaS, no telemetry. It uses your logged-in
+  `claude`, `codex`, `gh`.
 
-```bash
-herdr plugin install jpolec/herdr-plugin-odysseus            # GitHub shorthand
-herdr plugin install jpolec/herdr-plugin-odysseus --ref v0.1.0   # pin a revision
+## Quick start
+
+**1. Install**
+
+```sh
+herdr plugin install jpolec/herdr-plugin-odysseus
 ```
 
-The repository is `jpolec/herdr-plugin-odysseus`; the plugin id is
-`jpolec.herdr-orchestrator` and the binary is `herdr-orchestrator`. Herdr shows a
-trust preview of the manifest and the build command before installing; review
-`herdr-plugin.toml`, which is short.
+Herdr shows what the plugin will run, then builds it with Cargo (about a minute,
+without progress output — let it finish).
 
-Local development:
-
-```bash
-cargo build --release
-herdr plugin link .
-herdr plugin action list --plugin jpolec.herdr-orchestrator
-```
-
-### Keybinding (opt-in)
-
-The plugin never edits your Herdr config. `prefix+o` is already Herdr's default
-`open_notification_target`, so this suggests `prefix+alt+o`. Add to
-`~/.config/herdr/config.toml`:
+**2. Add a key** to `~/.config/herdr/config.toml`, then `herdr server reload-config`:
 
 ```toml
 [[keys.command]]
@@ -79,53 +88,100 @@ command = "jpolec.herdr-orchestrator.open"
 description = "orchestrator"
 ```
 
-Other actions: `jpolec.herdr-orchestrator.new-task` (popup form) and
-`jpolec.herdr-orchestrator.approvals`.
+(`prefix+o` is already Herdr's *open notification target*, so the plugin does not
+take it. The plugin never edits your config.)
 
-## Quick start
+**3. Open a repository workspace in Herdr, press `prefix+alt+o`, then `n`**, type
+the task, pick a workflow and runner, `ctrl+s`. Watch the run on the dashboard;
+the agent appears as a new tab in a workspace for its worktree.
 
-```bash
+> [!IMPORTANT]
+> **No restart needed.** The engine starts on demand when you create a task; it is
+> not tied to Herdr's startup. Your existing panes and agents are never touched.
+
+> [!NOTE]
+> **Claude asks "Do you trust this folder?"** the first time it starts in a new
+> worktree. The run shows `awaiting human` and waits — answer it in the agent's
+> pane (`f` on the dashboard jumps there). Trusting your repository folder in
+> Claude beforehand avoids it, since worktrees live inside the repository.
+
+### Try it without spending a token
+
+Every workflow runs with deterministic fake agents. Pick `fake-success` as the
+runner in the form, or from a shell:
+
+```sh
+herdr plugin action invoke jpolec.herdr-orchestrator.install-cli   # optional: puts herdr-orchestrator in ~/.local/bin
 cd your-repo
-
-# See what would happen (policy is evaluated, nothing is created)
-herdr-orchestrator plan "Add a --json flag to the export command"
-herdr-orchestrator --dry-run task create "Add a --json flag" --workflow implement-review
-
-# Queue it (starts the engine daemon on demand)
-herdr-orchestrator task create "Add a --json flag to the export command"
+herdr-orchestrator task create "Add a --json flag" --workflow quick-task --runner fake-success
 herdr-orchestrator run list
-herdr-orchestrator run show '#1'
-
-# Approvals
-herdr-orchestrator approval list
-herdr-orchestrator approval show ap-1a2b
-herdr-orchestrator approval approve ap-1a2b --note "reviewed"
-
-# Tournament mode
-herdr-orchestrator task create "Speed up ingestion" --workflow variant-review \
-  --variants 3 --variant-runners codex,codex,claude
-herdr-orchestrator task compare 2
-herdr-orchestrator task select 2 '#2B'
-herdr-orchestrator run pr '#2B'          # draft PR for the chosen variant
-
-# Integrity and health
-herdr-orchestrator audit verify --all
-herdr-orchestrator doctor
-
-# CI / headless: no daemon, deterministic fake agents
-herdr-orchestrator task create "smoke" --workflow quick-task --runner fake-success --foreground
 ```
 
-Inside Herdr, the binary is `./target/release/herdr-orchestrator` in the plugin
-directory. Put it on your `PATH` or alias it for CLI use.
+### Or hand it to an agent
 
-Other commands include `run retry [--from-step S]`, `run cancel`, `run pause|resume`,
-`run diff`, `run logs`, `run focus` (focuses the agent pane in Herdr),
-`queue pause|resume|status`, `workflow list|show|validate`,
-`policy check|validate|show`, `config show [--layers]|paths|init`, `runners` and
-`skills`. Add `--json` for machine-readable output.
+```text
+Install the herdr-orchestrator plugin for Herdr on this machine.
 
-## The orchestrator pane (TUI)
+1. herdr plugin install jpolec/herdr-plugin-odysseus   (answer y; it builds with cargo, ~1 minute)
+2. herdr plugin action invoke jpolec.herdr-orchestrator.install-cli
+3. herdr-orchestrator doctor   — every line should be OK or WARN, none ERROR.
+
+Do NOT run `herdr server stop` and do not kill Herdr: that ends every program in
+every pane. Nothing here needs a restart. Do not edit ~/.config/herdr/config.toml
+without asking me.
+```
+
+## Workflows
+
+| Workflow | What happens |
+| --- | --- |
+| `quick-task` | one agent in a worktree; diff checked and committed |
+| `implement-review` | Codex implements → tests (2 retries with feedback) → Claude reviews → your approval → draft PR |
+| `secure-change` | implement → tests → lint → security scan → gated security review → policy gate → approval → draft PR |
+| `variant-review` | for `--variants N`: implement → tests → review in every variant; you compare and choose |
+
+Workflows are short YAML files; add your own in `.ai/herdr-orchestrator/workflows/`.
+See [WORKFLOWS](docs/WORKFLOWS.md) and the [example project](examples/).
+
+## Questions
+
+**Will it break my Herdr or my running agents?**
+No. The plugin is a separate program: Herdr runs it when you invoke an action, once
+at startup (to resume interrupted work, if any) and for a few milliseconds when a
+pane closes or a worktree is removed (to wake its engine, if it is running). It
+never touches panes it did not create, and a crash in it cannot crash Herdr.
+To switch it off: `herdr plugin disable jpolec.herdr-orchestrator`; to remove it:
+`herdr plugin uninstall jpolec.herdr-orchestrator`.
+
+**Is it a sandbox?**
+No, and it does not pretend to be. Commands *the orchestrator* runs are checked
+before they run. What an agent does inside its own pane is not intercepted in real
+time; instead the agent starts with conservative permissions (Claude
+`acceptEdits`, Codex `workspace-write` + `on-request`), works only in its
+worktree, and the diff is checked against policy after every step — a forbidden
+file blocks the run before anything is committed or pushed.
+[SECURITY_MODEL](docs/SECURITY_MODEL.md) spells out what is and is not enforced.
+
+**Does anything leave my machine?**
+No telemetry, ever. Your agents, `git` and `gh` talk to their services as usual.
+
+**What does it cost?**
+Free and MIT licensed. Agent usage is billed by your providers as usual. Token and
+cost figures are shown only when a provider reports them, and labelled
+*reported*, *estimated* or *unknown* — never made up.
+
+**Does it merge or deploy?**
+Never. PRs are drafts, pushing and opening a PR need your approval by default,
+and `github.auto_merge: true` is rejected.
+
+**Where is my data?**
+`~/.local/state/herdr/plugins/jpolec.herdr-orchestrator/` (runs, approvals, audit,
+logs). `herdr-orchestrator config paths` prints every location.
+
+## Reference
+
+<details>
+<summary><b>Orchestrator pane keys</b></summary>
 
 | Screen | Keys |
 | --- | --- |
@@ -134,75 +190,88 @@ Other commands include `run retry [--from-step S]`, `run cancel`, `run pause|res
 | Approval | `y` approve once · `n` deny · `c` cancel run · `d` diff · `f` open agent pane · `esc` back |
 | New task | `tab` next field · `←→` choose · `ctrl+s` create · `esc` cancel |
 
-The pane only reads state and records decisions. Closing it never affects
-running work.
+Herdr actions: `jpolec.herdr-orchestrator.open`, `.new-task` (popup form),
+`.approvals`, `.install-cli`.
+</details>
 
-## Configuration
-
-Precedence (later wins): built-in defaults → global config
-(`$HERDR_PLUGIN_CONFIG_DIR/config.yaml`) → project config
-(`.ai/herdr-orchestrator/config.yaml`) → workflow defaults → task options → CLI
-flags. `policy.files` concatenate across layers, so a project can add policy but
-not silently drop global policy.
-
-Run `herdr-orchestrator config init` for a commented project config, and see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §16. Project workflows and skills
-live in `.ai/herdr-orchestrator/workflows/` and `.ai/herdr-orchestrator/skills/`
-(also `.ai/skills/`).
-
-State lives in `HERDR_PLUGIN_STATE_DIR` (by default
-`~/.local/state/herdr/plugins/jpolec.herdr-orchestrator/`). Override it with
-`HERDR_ORCH_STATE_DIR`. `herdr-orchestrator config paths` prints the locations.
-
-## Safety: what this does and does not do
-
-- Orchestrator-run commands (workflow commands, git, gh, agent launch arguments) are policy-checked **before** execution and audited.
-- Agents' own tool use inside their panes is **not** intercepted in real time. The orchestrator does four things instead:
-  - launches agents with conservative permission modes (`claude --permission-mode acceptEdits`, `codex --sandbox workspace-write --ask-for-approval on-request`)
-  - confines them to the run's worktree as cwd
-  - checks the **diff** against policy at every step boundary and before any approval or PR
-  - blocks the run on violations
-- **This is not a sandbox.** An agent can still run arbitrary commands as your user. The `ExecutionSandbox` seam exists for future OS-level isolation.
-- Repository git hooks are disabled for orchestrator commits. Child processes get an allowlisted environment, and secrets are redacted from audit and logs (best-effort, pattern-based).
-- Nothing auto-merges or deploys. PRs are drafts, and opening one requires approval by default.
-
-Details: [SECURITY_MODEL](docs/SECURITY_MODEL.md) and [THREAT_MODEL](docs/THREAT_MODEL.md).
-
-**No telemetry.** Nothing leaves your machine except what your agents, `git` and
-`gh` do on your behalf.
-
-## Testing
+<details>
+<summary><b>CLI</b></summary>
 
 ```bash
-cargo test            # unit + integration; no accounts, no network, no Herdr needed
+herdr-orchestrator plan "Add a --json flag"                      # dry run: what would happen, with policy
+herdr-orchestrator task create "Add a --json flag" -w implement-review
+herdr-orchestrator task create "Speed up ingestion" -w variant-review \
+  --variants 3 --variant-runners codex,codex,claude
+herdr-orchestrator task compare 2 && herdr-orchestrator task select 2 '#2B'
+herdr-orchestrator run list | run show '#1' | run diff '#1' | run logs '#1'
+herdr-orchestrator run retry '#1' [--from-step tests] | run cancel '#1' | run pr '#2B'
+herdr-orchestrator approval list | approval show <id> | approval approve <id> --note "ok"
+herdr-orchestrator policy check --command "git push -f origin main"   # DENY, exit 3
+herdr-orchestrator audit verify --all
+herdr-orchestrator doctor
+herdr-orchestrator task create "smoke" --runner fake-success --foreground   # CI, no daemon
 ```
 
-Integration tests use real `git` in temp repos, deterministic fake runners
-(`fake-success`, `fake-fail`, `fake-timeout`, `fake-review-findings`,
-`fake-fix-on-retry`, `fake-touch-secret`, …), a mock Herdr and a fake `gh`.
-For real end-to-end testing against an isolated named Herdr session, see
-[HERDR_INTEGRATION.md](docs/HERDR_INTEGRATION.md#end-to-end-testing).
+Also: `queue pause|resume|status`, `workflow list|show|validate`,
+`policy validate|show`, `config show [--layers]|paths|init`, `runners`, `skills`,
+`--json` everywhere.
+</details>
+
+<details>
+<summary><b>Configuration</b></summary>
+
+Precedence (later wins): built-in defaults → global
+(`~/.config/herdr/plugins/config/jpolec.herdr-orchestrator/config.yaml`) →
+project (`.ai/herdr-orchestrator/config.yaml`) → workflow defaults → task options
+→ CLI flags. Project policy files are *added* to the global ones, never replace
+them silently. `herdr-orchestrator config init` writes a commented project config;
+[examples/](examples/) shows a complete project setup (checks, custom runner,
+policy, workflow, skill).
+</details>
+
+<details>
+<summary><b>Requirements</b></summary>
+
+Herdr ≥ 0.9.0 on macOS or Linux · Rust stable (Herdr builds the plugin at install)
+· `git` · optional: `gh` (PRs, issues), `claude`, `codex`, `opencode`.
+</details>
+
+<details>
+<summary><b>Development</b></summary>
+
+```bash
+cargo test                       # unit + integration: real git, fake agents, mock Herdr; no accounts or network
+cargo build --release && herdr plugin link .
+```
+
+Real end-to-end testing runs against an isolated *named* Herdr session, never your
+default one: [HERDR_INTEGRATION](docs/HERDR_INTEGRATION.md#end-to-end-testing).
+See [CONTRIBUTING](CONTRIBUTING.md).
+</details>
 
 ## Documentation
 
-- [ARCHITECTURE](docs/ARCHITECTURE.md): design and decisions
-- [HERDR_INTEGRATION](docs/HERDR_INTEGRATION.md): verified Herdr API usage, manifest, E2E
-- [WORKFLOWS](docs/WORKFLOWS.md): workflow DSL and templates
-- [POLICY_ENGINE](docs/POLICY_ENGINE.md): rules, command normalization, default policy
-- [RUNNERS](docs/RUNNERS.md): runner modes and profiles
-- [AUDIT](docs/AUDIT.md): event schema, hash chain, redaction
-- [RECOVERY](docs/RECOVERY.md): durability and restart behavior
-- [SECURITY_MODEL](docs/SECURITY_MODEL.md) and [THREAT_MODEL](docs/THREAT_MODEL.md)
-- [UPSTREAM_REQUESTS](docs/UPSTREAM_REQUESTS.md): Herdr features that would help
-- [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md)
+[Architecture](docs/ARCHITECTURE.md) ·
+[Herdr integration](docs/HERDR_INTEGRATION.md) ·
+[Workflows](docs/WORKFLOWS.md) ·
+[Policy engine](docs/POLICY_ENGINE.md) ·
+[Runners](docs/RUNNERS.md) ·
+[Audit](docs/AUDIT.md) ·
+[Recovery](docs/RECOVERY.md) ·
+[Security model](docs/SECURITY_MODEL.md) ·
+[Threat model](docs/THREAT_MODEL.md) ·
+[Upstream requests](docs/UPSTREAM_REQUESTS.md) ·
+[Security policy](SECURITY.md) ·
+[Changelog](CHANGELOG.md)
 
 ## Acknowledgements
 
-[open-mercato/cezar](https://github.com/open-mercato/cezar) (MIT) was used as a
-**functional reference** for tasks, queues, worktrees, workflows, variants and
-GitHub handoff. No Cezar code was copied. This is an independent Rust
-implementation designed around Herdr panes.
+[open-mercato/cezar](https://github.com/open-mercato/cezar) (MIT) was the functional
+reference for tasks, queues, worktrees, workflows, variants and GitHub handoff. No
+Cezar code was copied; this is an independent Rust implementation built around
+Herdr panes.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Repository `jpolec/herdr-plugin-odysseus`, plugin id
+`jpolec.herdr-orchestrator`, binary `herdr-orchestrator`.

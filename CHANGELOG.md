@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.1] - 2026-09-23
+
+### Added
+- `install-cli` action: opt-in symlink of `herdr-orchestrator` into `~/.local/bin` (never overwrites a real file).
+- README rewritten for first-time users (quick start, FAQ, illustrations in `assets/`).
+
+### Changed
+- `ratatui` 0.29 → 0.30 (removes unmaintained `paste` and unsound `lru` from the dependency tree; `cargo audit` clean).
+- Commands run from the plugin checkout never treat the plugin's own source as the project repository.
+
 ## 0.1.0 — 2026-09-23
 
 First MVP release. Targets Herdr ≥ 0.9.0 on macOS and Linux.

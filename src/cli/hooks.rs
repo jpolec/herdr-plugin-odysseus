@@ -20,6 +20,12 @@ pub enum HookCmd {
     },
     /// Action: open the new-task popup.
     NewTask,
+    /// Action (opt-in): symlink the CLI into ~/.local/bin.
+    InstallCli {
+        /// Target directory (default: ~/.local/bin).
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 pub fn run(app: &App, h: HookCmd) -> Result<i32> {
@@ -54,5 +60,57 @@ pub fn run(app: &App, h: HookCmd) -> Result<i32> {
             super::open_plugin_pane("new-task", "popup", None)?;
             Ok(0)
         }
+        HookCmd::InstallCli { dir } => {
+            let msg = install_cli(dir)?;
+            println!("{msg}");
+            // Actions run in the background; tell the user in Herdr too.
+            if let Some(h) = crate::herdr::SocketHerdr::discover(None) {
+                use crate::herdr::HerdrApi;
+                let _ = h.notify("herdr-orchestrator CLI", &msg, false);
+            }
+            Ok(0)
+        }
+    }
+}
+
+/// Symlink the running binary into `dir` (default `~/.local/bin`). Only
+/// ever replaces a symlink; never overwrites a real file.
+fn install_cli(dir: Option<std::path::PathBuf>) -> Result<String> {
+    let exe = std::env::current_exe()?.canonicalize()?;
+    let dir = match dir {
+        Some(d) => d,
+        None => std::path::PathBuf::from(std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME is not set"))?).join(".local/bin"),
+    };
+    std::fs::create_dir_all(&dir)?;
+    let link = dir.join("herdr-orchestrator");
+    match std::fs::symlink_metadata(&link) {
+        Ok(md) if md.file_type().is_symlink() => std::fs::remove_file(&link)?,
+        Ok(_) => anyhow::bail!("{} exists and is not a symlink; not touching it", link.display()),
+        Err(_) => {}
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&exe, &link)?;
+    let on_path = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d == dir));
+    Ok(format!(
+        "linked {} -> {}{}",
+        link.display(),
+        exe.display(),
+        if on_path { String::new() } else { format!(" ({} is not on your PATH; add it to use `herdr-orchestrator`)", dir.display()) }
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn install_cli_only_replaces_symlinks() {
+        let d = tempfile::tempdir().unwrap();
+        let m = super::install_cli(Some(d.path().to_path_buf())).unwrap();
+        assert!(m.contains("linked"));
+        assert!(super::install_cli(Some(d.path().to_path_buf())).is_ok(), "re-running replaces its own link");
+        std::fs::remove_file(d.path().join("herdr-orchestrator")).unwrap();
+        std::fs::write(d.path().join("herdr-orchestrator"), "mine").unwrap();
+        assert!(super::install_cli(Some(d.path().to_path_buf())).is_err());
+        assert_eq!(std::fs::read_to_string(d.path().join("herdr-orchestrator")).unwrap(), "mine");
     }
 }
