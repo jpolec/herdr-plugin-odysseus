@@ -715,3 +715,36 @@ fn failed_run_keeps_its_agent_pane_for_inspection() {
     assert_eq!(r.status, RunStatus::Failed);
     assert_eq!(mock.agent_names().len(), 1, "failed runs keep the agent to look at");
 }
+
+#[test]
+fn idle_flicker_mid_task_does_not_end_the_step() {
+    // Real-run finding (#5): Claude went idle for moments between tool calls
+    // and permission prompts; the step was committed mid-work and the agent
+    // kept editing for 30 more minutes.
+    let slot: Arc<std::sync::Mutex<Option<Arc<MockHerdr>>>> = Arc::new(std::sync::Mutex::new(None));
+    let s2 = slot.clone();
+    let mock = Arc::new(MockHerdr::new(Arc::new(move |c: &herdr_orchestrator::herdr::mock::PromptCall| {
+        let m = s2.lock().unwrap().clone().unwrap();
+        let (name, cwd, out) = (c.agent_name.clone(), c.cwd.clone(), output_path(&c.prompt));
+        std::thread::spawn(move || {
+            std::fs::write(cwd.join("part1.txt"), "early\n").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            m.set_agent_status(&name, AgentStatus::Working); // resumes after a brief idle
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            std::fs::write(cwd.join("part2.txt"), "late\n").unwrap();
+            herdr_orchestrator::runners::fake::perform("noop", &cwd, &out, "implement", 1).unwrap();
+            m.set_agent_status(&name, AgentStatus::Idle);
+        });
+        MockReaction::Finish // reports idle immediately, mid-task
+    })));
+    *slot.lock().unwrap() = Some(mock.clone());
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
+    let t = h.task("Flicker", "quick-task", Some("claude"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    let files: Vec<_> = r.diff_stat.as_ref().unwrap().files.iter().map(|f| f.path.clone()).collect();
+    assert!(files.contains(&"part2.txt".to_string()), "late work must be in the commit: {files:?}");
+    assert!(!r.steps[0].parse_failed);
+    assert_eq!(mock.prompts(&mock.agent_names()[0]).len(), 1, "no reminder while the agent is still working");
+}

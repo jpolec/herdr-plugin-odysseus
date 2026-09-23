@@ -386,20 +386,14 @@ impl PaneRunner {
             return Ok(self.outcome(req, b, end));
         }
         events(AgentEvent::PromptSending);
-        let sent_at = Instant::now();
         let remaining = deadline.saturating_duration_since(Instant::now());
         match self.herdr.prompt_agent(&target, text, Some((SETTLED, CHUNK.min(remaining)))) {
             Ok(info) => {
                 b.prompt_sent = true;
                 events(AgentEvent::PromptSent);
                 b.last_status = Some(info.agent_status.as_str().into());
-                if info.agent_status.is_settled() {
-                    // Real-run finding: right after a prompt Herdr may still
-                    // report the pre-prompt `idle` while the agent is only
-                    // about to start. Confirm before calling it done.
-                    if self.confirm_settled(req, &target, sent_at, deadline, cancel) {
-                        return Ok(self.outcome(req, b, AgentEnd::Completed));
-                    }
+                if info.agent_status.is_settled() && self.confirm_settled(req, &target, deadline, cancel) {
+                    return Ok(self.outcome(req, b, AgentEnd::Completed));
                 }
             }
             Err(e) if e.is_wait_timeout() => {
@@ -428,19 +422,23 @@ impl PaneRunner {
             }
             Err(e) => return Err(e.into()),
         }
-        let out = self.wait_settled(req, b, deadline, cancel, events)?;
-        if out.end == AgentEnd::Completed && out.output_file_text.is_none() && !self.confirm_settled(req, &target, sent_at, deadline, cancel) {
-            return self.wait_settled(req, b, deadline, cancel, events);
+        // The result file is the real "I am finished" signal. `idle` without
+        // it is only accepted after the agent stays idle for a whole settle
+        // window (real-run finding: Claude flickers to idle between tool
+        // calls and permission prompts, and a run was committed mid-work).
+        loop {
+            let out = self.wait_settled(req, b, deadline, cancel, events)?;
+            if out.end != AgentEnd::Completed || out.output_file_text.is_some() || self.confirm_settled(req, &target, deadline, cancel) {
+                return Ok(self.outcome(req, b, out.end));
+            }
         }
-        Ok(out)
     }
 
-    /// A settled state reported within `settle_window` of the prompt, with
-    /// no result file, is not trusted yet: watch for the result file (done)
-    /// or renewed activity (not done) until the window closes. Returns
-    /// `true` when the agent is really finished.
-    fn confirm_settled(&self, req: &AgentRequest, target: &str, sent_at: Instant, deadline: Instant, cancel: &CancelToken) -> bool {
-        let window_end = (sent_at + self.settle_window).min(deadline);
+    /// A settled state without a result file is not trusted yet: the agent
+    /// must stay idle for a whole `settle_window`. Returns `true` when it
+    /// did (or wrote its result file), `false` as soon as it works again.
+    fn confirm_settled(&self, req: &AgentRequest, target: &str, deadline: Instant, cancel: &CancelToken) -> bool {
+        let window_end = (Instant::now() + self.settle_window).min(deadline);
         loop {
             if read_output_file(&req.output_file).is_some() {
                 return true;

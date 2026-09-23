@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8] - 2026-09-23
+
+### Fixed
+- A step could be committed while the agent was still working. Claude briefly reports `idle` between tool calls and permission prompts; run #5 was committed after 2 minutes and the agent kept editing for 30 more. The result file is now the completion signal: `idle` without it is accepted only after the agent stays idle for a whole `herdr.settle_window`.
+
+### Added
+- `docs/ROADMAP.md`: ADR-driven epics (plan → accepted tasks → verified outcome), ideas from Cezar, real-time Claude policy via `PreToolUse` hooks. Written by the orchestrator in run #4.
+
 ## [0.1.7] - 2026-09-23
 
 ### Changed
