@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.5] - 2026-09-23
+
+### Added
+- See and answer agent questions from the orchestrator popup: runs whose agent is waiting show "is asking you something"; `enter` opens a live view of the agent's pane and forwards answer keys (digits, y/n/a, arrows, enter, tab). Answers are recorded in the audit log (`human_input_sent`).
+- "What now" hints for failed, needs-human, blocked and awaiting-approval runs; an "Agents asking" counter in the footer.
+
+### Fixed
+- Pasting multi-line text into the new-task form turned line breaks into the letter `j`; the form now uses bracketed paste and treats ctrl+j as a newline.
+- Agents are told to write their result file with their file tool rather than a shell command, avoiding needless permission prompts.
+
 ## [0.1.4] - 2026-09-23
 
 ### Fixed

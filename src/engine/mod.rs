@@ -422,7 +422,8 @@ pub fn orchestrator_instructions(run: &Run, step_id: &str, attempt: u32, worktre
         "Orchestrator instructions (herdr-orchestrator run {run} step `{step}`, attempt {attempt}):\n\
          - Working directory: {wt} (an isolated git worktree on branch {branch}). Stay inside it.\n\
          - Do not commit, push, open pull requests or rewrite git history; the orchestrator does that.\n\
-         - When you are finished, write exactly one JSON object to this file (create directories as needed):\n\
+         - When you are finished, write exactly one JSON object to this file (create directories as needed).\n\
+           Use your file-writing tool for it, not a shell command, so no permission prompt is needed:\n\
          Output file: {out}\n\
          Format:\n{format}\n\
          - After writing the file, stop and wait.",

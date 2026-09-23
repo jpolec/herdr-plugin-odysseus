@@ -27,6 +27,8 @@ pub enum Screen {
     ApprovalDetail(String),
     Text { title: String, lines: Vec<String>, scroll: usize },
     NewTask,
+    /// Live view of an agent that is waiting for a human; keys are forwarded.
+    Agent(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +69,8 @@ pub struct State {
     pub popup_mode: bool,
     /// Running as a Herdr popup (modal): jumping to an agent closes it.
     pub in_popup: bool,
+    /// Last lines of the agent pane shown on the Agent screen.
+    pub agent_lines: Vec<String>,
 }
 
 impl State {
@@ -84,6 +88,7 @@ impl State {
             daemon_up: false,
             popup_mode: false,
             in_popup: false,
+            agent_lines: vec![],
         }
     }
 
@@ -107,6 +112,16 @@ impl State {
 
     pub fn pending_approvals(&self) -> Vec<&ApprovalRequest> {
         self.approvals.iter().filter(|a| a.status == ApprovalStatus::Pending).collect()
+    }
+
+    /// The step of `run` that is waiting for a human in the agent's own UI.
+    pub fn waiting_step<'a>(&self, run: &'a Run) -> Option<&'a StepExecution> {
+        run.steps.iter().rev().find(|e| e.status == StepStatus::AwaitingHuman)
+    }
+
+    /// Runs whose agent is asking something right now.
+    pub fn agents_waiting(&self) -> usize {
+        self.runs.iter().filter(|r| self.waiting_step(r).is_some()).count()
     }
 
     pub fn flash(&mut self, m: impl Into<String>) {
@@ -143,6 +158,19 @@ fn load(state: &mut State, ctx: &crate::engine::EngineCtx) {
         state.approvals = a;
     }
     state.paused = ctx.store.load_scheduler().map(|s| s.paused).unwrap_or(false);
+    if let Screen::Agent(id) = &state.screen {
+        state.agent_lines = state
+            .run(id)
+            .and_then(|r| state.waiting_step(r).or(r.steps.last()))
+            .and_then(|e| e.agent.as_ref())
+            .and_then(|a| a.pane_id.clone())
+            .and_then(|p| {
+                use crate::herdr::HerdrApi;
+                crate::herdr::SocketHerdr::discover(None)?.read_pane(&p, 60).ok()
+            })
+            .map(|t| t.lines().map(String::from).collect())
+            .unwrap_or_else(|| vec!["(the agent pane is not reachable)".into()]);
+    }
     state.daemon_up = crate::daemon::is_running(&ctx.store.layout);
     state.clamp();
 }
@@ -167,7 +195,9 @@ pub fn run(app: &CliApp, new_task: bool, view: Option<&str>) -> Result<()> {
     load(&mut state, &ctx);
 
     let mut terminal = ratatui::init();
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), ratatui::crossterm::event::EnableBracketedPaste);
     let res = event_loop(app, &ctx, &mut terminal, &mut state);
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), ratatui::crossterm::event::DisableBracketedPaste);
     ratatui::restore();
     res
 }
@@ -204,10 +234,19 @@ fn event_loop(app: &CliApp, ctx: &crate::engine::EngineCtx, terminal: &mut ratat
         }
         terminal.draw(|f| render(f, state))?;
         if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(k) = event::read()? {
-                if k.kind == KeyEventKind::Press && handle_key(app, ctx, state, k)? {
-                    return Ok(());
+            match event::read()? {
+                Event::Key(k) if k.kind == KeyEventKind::Press && handle_key(app, ctx, state, k)? => return Ok(()),
+                // Bracketed paste: keep newlines as newlines.
+                Event::Paste(text) => {
+                    if let (Screen::NewTask, Some(f)) = (&state.screen, state.form.as_mut()) {
+                        match f.field {
+                            0 => f.text.push_str(&text.replace("\r\n", "\n").replace('\r', "\n")),
+                            3 => f.base.push_str(text.trim()),
+                            _ => {}
+                        }
+                    }
                 }
+                _ => {}
             }
         }
         if last_load.elapsed() > Duration::from_secs(1) {
@@ -321,6 +360,9 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
         }
         return Ok(false);
     }
+    if let Screen::Agent(id) = state.screen.clone() {
+        return agent_key(app, state, &id, k, ctx);
+    }
     match k.code {
         KeyCode::Down | KeyCode::Char('j') => {
             state.selected += 1;
@@ -341,8 +383,13 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
         KeyCode::Enter => match &state.screen {
             Screen::Dashboard => {
                 if let Some(r) = selected_run(state) {
-                    state.screen = Screen::RunDetail(r.run_id);
-                    state.selected = r.steps.len().saturating_sub(1);
+                    if state.waiting_step(&r).is_some() {
+                        state.screen = Screen::Agent(r.run_id);
+                        load(state, ctx);
+                    } else {
+                        state.screen = Screen::RunDetail(r.run_id);
+                        state.selected = r.steps.len().saturating_sub(1);
+                    }
                 }
             }
             Screen::Approvals => {
@@ -352,7 +399,12 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
             }
             Screen::RunDetail(id) => {
                 if let Some(r) = state.run(id).cloned() {
-                    state.screen = log_screen(&r, state.selected);
+                    if r.steps.get(state.selected).is_some_and(|e| e.status == StepStatus::AwaitingHuman) {
+                        state.screen = Screen::Agent(r.run_id);
+                        load(state, ctx);
+                    } else {
+                        state.screen = log_screen(&r, state.selected);
+                    }
                 }
             }
             _ => {}
@@ -448,6 +500,59 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
     Ok(false)
 }
 
+/// Keys on the Agent screen go straight to the waiting agent (digits,
+/// y/n/a, arrows, Enter, Tab). `Esc` goes back, `f` opens the real pane.
+fn agent_key(app: &CliApp, state: &mut State, run_id: &str, k: KeyEvent, ctx: &crate::engine::EngineCtx) -> Result<bool> {
+    let Some(run) = state.run(run_id).cloned() else {
+        state.screen = Screen::Dashboard;
+        return Ok(false);
+    };
+    let target = state
+        .waiting_step(&run)
+        .or(run.steps.last())
+        .and_then(|e| e.agent.as_ref())
+        .and_then(|a| a.agent_name.clone().or_else(|| a.pane_id.clone()));
+    let key: Option<String> = match k.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.screen = Screen::Dashboard;
+            state.selected = 0;
+            return Ok(false);
+        }
+        KeyCode::Char('f') => {
+            let (m, focused) = focus_agent(app, &run, None).unwrap_or_else(|e| (format!("{e:#}"), false));
+            if focused && state.in_popup {
+                return Ok(true);
+            }
+            state.flash(m);
+            return Ok(false);
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() || matches!(c, 'y' | 'n' | 'a') => Some(c.to_string()),
+        KeyCode::Up => Some("up".into()),
+        KeyCode::Down => Some("down".into()),
+        KeyCode::Enter => Some("enter".into()),
+        KeyCode::Tab => Some("tab".into()),
+        _ => None,
+    };
+    let (Some(key), Some(target)) = (key, target) else { return Ok(false) };
+    use crate::herdr::HerdrApi;
+    match crate::herdr::SocketHerdr::discover(None).map(|h| h.send_keys(&target, &[key.as_str()])) {
+        Some(Ok(())) => {
+            // Record the human's answer: it changes what the agent does next.
+            ctx.audit(
+                crate::audit::EventDraft::new("human_input_sent", crate::audit::Actor::human(std::env::var("USER").ok()))
+                    .run(&run.run_id, &run.task_id)
+                    .data(serde_json::json!({"key": key, "agent": target})),
+            );
+            state.flash(format!("sent `{key}` to the agent"));
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            load(state, ctx);
+        }
+        Some(Err(e)) => state.flash(format!("could not send: {e}")),
+        None => state.flash("Herdr is not reachable"),
+    }
+    Ok(false)
+}
+
 fn form_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut State, k: KeyEvent) -> Result<bool> {
     let Some(f) = state.form.as_mut() else {
         state.screen = Screen::Dashboard;
@@ -510,6 +615,9 @@ fn form_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut State, k: 
             }
         }
         KeyCode::Enter if f.field == 0 => f.text.push('\n'),
+        // Terminals deliver pasted/typed line feeds as ctrl+j.
+        KeyCode::Char('j') if k.modifiers.contains(KeyModifiers::CONTROL) && f.field == 0 => f.text.push('\n'),
+        KeyCode::Char('j') if k.modifiers.contains(KeyModifiers::CONTROL) => {}
         KeyCode::Enter => f.field = (f.field + 1) % Form::FIELDS,
         KeyCode::Backspace => match f.field {
             0 => {

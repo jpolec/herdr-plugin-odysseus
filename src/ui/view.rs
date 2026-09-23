@@ -41,6 +41,7 @@ pub fn render(f: &mut Frame, s: &State) {
         Screen::ApprovalDetail(id) => approval_detail(f, main, s, id),
         Screen::Text { title, lines, scroll } => text(f, main, title, lines, *scroll),
         Screen::NewTask => new_task(f, main, s.form.as_ref()),
+        Screen::Agent(id) => agent_screen(f, main, s, id),
     }
     footer_bar(f, footer, s);
     if let Some(p) = &s.confirm {
@@ -67,6 +68,7 @@ fn footer_bar(f: &mut Frame, area: Rect, s: &State) {
         Screen::ApprovalDetail(_) => "[y] approve once  [n] deny  [c] cancel run  [d] diff  [f] open agent pane  [esc] back",
         Screen::Text { .. } => "[↑↓/space] scroll  [g/G] top/bottom  [esc] back",
         Screen::NewTask => "[tab] next field  [←→] choose  [ctrl+s] create  [esc] cancel",
+        Screen::Agent(_) => "keys go to the agent: [1-9] [y] [n] [a] [↑↓] [enter] [tab]   ·   [f] open its pane   [esc] back",
     };
     let stats = Line::from(vec![
         Span::styled(" Running ", Style::new().add_modifier(Modifier::BOLD)),
@@ -77,6 +79,7 @@ fn footer_bar(f: &mut Frame, area: Rect, s: &State) {
         Span::raw(format!("{agents}  ")),
         Span::styled("Approvals ", Style::new().add_modifier(Modifier::BOLD)),
         Span::styled(format!("{appr}  "), if appr > 0 { Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::new() }),
+        Span::styled(if s.agents_waiting() > 0 { format!("Agents asking {}  ", s.agents_waiting()) } else { String::new() }, Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::styled(if s.paused { "QUEUE PAUSED  " } else { "" }, Style::new().fg(Color::Magenta)),
         Span::styled(if s.daemon_up { "engine up" } else { "engine idle" }, Style::new().fg(Color::DarkGray)),
         Span::raw("   "),
@@ -109,6 +112,12 @@ fn dashboard(f: &mut Frame, area: Rect, s: &State) {
                 head.push(Span::styled(format!("  — {}", reason.chars().take(70).collect::<String>()), Style::new().fg(Color::DarkGray)));
             }
             lines.push(Line::from(head));
+            if let Some(w) = s.waiting_step(r) {
+                lines.push(Line::from(vec![
+                    Span::raw("        "),
+                    Span::styled(format!("! {} · {} is asking you something — press enter to see and answer", w.step_id, w.runner.clone().unwrap_or_default()), Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                ]));
+            }
             if expand {
                 let wf = crate::workflow::Workflow::parse(&r.workflow_yaml).ok();
                 let ids: Vec<String> = wf.map(|w| w.steps.iter().map(|x| x.id.clone()).collect()).unwrap_or_default();
@@ -157,7 +166,7 @@ fn run_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
         return;
     };
     let task = s.task(&r.task_id);
-    let [head, steps, bottom] = Layout::vertical([Constraint::Length(9), Constraint::Min(5), Constraint::Length(9)]).areas(area);
+    let [head, steps, bottom] = Layout::vertical([Constraint::Length(10), Constraint::Min(5), Constraint::Length(9)]).areas(area);
     let kv = |k: &str, v: String| Line::from(vec![Span::styled(format!(" {k:<11}"), Style::new().fg(Color::DarkGray)), Span::raw(v)]);
     let head_lines = vec![
         Line::from(vec![Span::styled(format!(" {} ", r.display_name()), Style::new().add_modifier(Modifier::BOLD)), Span::styled(r.status.as_str(), Style::new().fg(status_color(r.status))), Span::raw(r.status_reason.as_ref().map(|x| format!(" — {x}")).unwrap_or_default())]),
@@ -169,6 +178,20 @@ fn run_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
         kv("Base SHA", format!("{} ({})", r.git.base_sha.as_deref().map(|x| &x[..12.min(x.len())]).unwrap_or(""), r.git.base_ref)),
         kv("PR", r.pr_url.clone().unwrap_or("-".into())),
     ];
+    let mut head_lines = head_lines;
+    let hint = if s.waiting_step(r).is_some() {
+        Some("The agent is asking you something: select its step and press enter to answer, or [f] to open its pane.")
+    } else {
+        match r.status {
+            RunStatus::NeedsHuman | RunStatus::Failed | RunStatus::Cancelled => Some("What now: [r] retry from the stopped step · [l] log · [d] diff · [f] open the agent pane · [x] cancel"),
+            RunStatus::Blocked => Some("Blocked by policy: fix the files in the worktree ([d] diff), then [r] retry — or [x] cancel."),
+            RunStatus::AwaitingApproval => Some("Waiting for your approval: press [a]."),
+            _ => None,
+        }
+    };
+    if let Some(h) = hint {
+        head_lines.insert(1, Line::styled(format!(" {h}"), Style::new().fg(Color::Yellow)));
+    }
     f.render_widget(Paragraph::new(head_lines), head);
     let rows: Vec<Row> = r
         .steps
@@ -286,6 +309,32 @@ fn text(f: &mut Frame, area: Rect, title: &str, lines: &[String], scroll: usize)
         })
         .collect();
     f.render_widget(Paragraph::new(styled).block(Block::new().borders(Borders::TOP).title(format!(" {title}  ({}/{}) ", scroll + 1, lines.len().max(1)))), area);
+}
+
+fn agent_screen(f: &mut Frame, area: Rect, s: &State, id: &str) {
+    let Some(r) = s.run(id) else {
+        f.render_widget(Paragraph::new("run not found"), area);
+        return;
+    };
+    let step = s.waiting_step(r).or(r.steps.last());
+    let [head, body] = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).areas(area);
+    let title = match step {
+        Some(e) if e.status == StepStatus::AwaitingHuman => Line::from(vec![
+            Span::styled(" AGENT IS ASKING ", Style::new().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(format!("  {} · {} · {} (pane {})", r.display_name(), e.step_id, e.runner.clone().unwrap_or_default(), e.agent.as_ref().and_then(|a| a.pane_id.clone()).unwrap_or_default())),
+        ]),
+        Some(e) => Line::raw(format!(" {} · {} · {} — no longer waiting ({})", r.display_name(), e.step_id, e.runner.clone().unwrap_or_default(), e.status.as_str())),
+        None => Line::raw(" no agent step"),
+    };
+    f.render_widget(
+        Paragraph::new(vec![title, Line::styled(" Live view of the agent's pane. Keys below go straight to the agent; your answer is recorded in the audit log.", Style::new().fg(Color::DarkGray))]),
+        head,
+    );
+    let h = body.height.saturating_sub(2) as usize;
+    let lines: Vec<&String> = s.agent_lines.iter().filter(|l| !l.trim().is_empty()).collect();
+    let from = lines.len().saturating_sub(h);
+    let shown: Vec<Line> = lines[from..].iter().map(|l| Line::raw((*l).clone())).collect();
+    f.render_widget(Paragraph::new(shown).block(Block::bordered().border_style(Style::new().fg(Color::Yellow))), body);
 }
 
 fn new_task(f: &mut Frame, area: Rect, form: Option<&Form>) {
@@ -413,5 +462,25 @@ mod tests {
         assert!(out.contains("src/a.rs"));
         assert!(out.contains("[y] approve once"));
         assert!(out.contains("Approvals 1"));
+    }
+
+    #[test]
+    fn waiting_agent_is_visible_and_answerable() {
+        let mut s = sample();
+        s.runs[0].steps[1].status = StepStatus::AwaitingHuman;
+        s.runs[0].steps[1].agent = Some(AgentBinding { mode: "pane".into(), pane_id: Some("w13:p2".into()), agent_name: Some("o124-review-abcd".into()), ..Default::default() });
+        let mut t = Terminal::new(TestBackend::new(130, 32)).unwrap();
+        t.draw(|f| render(f, &s)).unwrap();
+        let out = buffer_text(&t);
+        assert!(out.contains("is asking you something"), "{out}");
+        assert!(out.contains("Agents asking 1"));
+        s.screen = Screen::Agent("run-a".into());
+        s.agent_lines = vec![" Do you want to proceed?".into(), " ❯ 1. Yes".into(), "   2. No".into()];
+        let mut t = Terminal::new(TestBackend::new(130, 20)).unwrap();
+        t.draw(|f| render(f, &s)).unwrap();
+        let out = buffer_text(&t);
+        assert!(out.contains("AGENT IS ASKING"));
+        assert!(out.contains("Do you want to proceed?"));
+        assert!(out.contains("keys go to the agent"));
     }
 }
