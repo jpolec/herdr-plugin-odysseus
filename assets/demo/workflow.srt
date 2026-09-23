@@ -1,0 +1,58 @@
+1
+00:00:00,000 --> 00:00:04,937
+A full workflow: implement, test, retry, review, human approval
+
+2
+00:00:04,987 --> 00:00:12,637
+n starts a new task: describe it in plain words
+
+3
+00:00:12,687 --> 00:00:17,937
+Choose the workflow: implement-review-demo
+
+4
+00:00:17,987 --> 00:00:20,337
+ctrl+s queues it, enter follows the run
+
+5
+00:00:20,387 --> 00:00:23,337
+The agent implements the change in its own worktree
+
+6
+00:00:23,387 --> 00:00:26,337
+The tests run...
+
+7
+00:00:26,387 --> 00:00:29,337
+...and fail. The failure log goes back to the same agent,
+which keeps its context
+
+8
+00:00:29,387 --> 00:00:32,337
+Second attempt: the tests run again
+
+9
+00:00:32,387 --> 00:00:35,437
+Tests pass. A separate reviewer agent checks the diff
+
+10
+00:00:35,487 --> 00:00:40,737
+Review approved. Nothing ships without you:
+the run waits for your approval
+
+11
+00:00:40,787 --> 00:00:42,337
+a shows what is waiting for you
+
+12
+00:00:42,387 --> 00:00:46,737
+Tests pass, the review approved. Ship it?
+
+13
+00:00:46,787 --> 00:00:49,337
+y approves
+
+14
+00:00:49,387 --> 00:00:57,830
+Done. Nothing is merged or deployed automatically.
+
