@@ -29,6 +29,6 @@ Why it stopped, what changed, and the exact policy rule that matched
 y approves this one action. The policy itself stays the same.
 
 8
-00:00:33,595 --> 00:00:42,019
+00:00:33,595 --> 00:00:41,480
 The run finishes. The decision is recorded in a tamper-evident audit log.
 

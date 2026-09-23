@@ -53,6 +53,6 @@ Tests pass, the review approved. Ship it?
 y approves
 
 14
-00:00:49,387 --> 00:00:57,830
+00:00:49,387 --> 00:00:57,600
 Done. Nothing is merged or deployed automatically.
 
