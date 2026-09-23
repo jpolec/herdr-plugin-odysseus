@@ -138,6 +138,16 @@ impl AgentRunner for FakeRunner {
         b.prompt_sent = true;
         events(AgentEvent::PromptSent);
         let t0 = Instant::now();
+        // Demo/recording knob: make fake agents take visible time.
+        if let Some(ms) = std::env::var("HERDR_ORCH_FAKE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
+            let until = Instant::now() + Duration::from_millis(ms.min(600_000));
+            while Instant::now() < until {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         let r = perform(&self.scenario, &req.worktree, &req.output_file, &req.step_id, req.attempt)?;
         let end = match r {
             FakeResult::Done => AgentEnd::Completed,

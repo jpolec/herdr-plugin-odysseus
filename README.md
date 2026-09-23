@@ -133,6 +133,9 @@ herdr-orchestrator task create "Add a --json flag" --workflow quick-task --runne
 herdr-orchestrator run list
 ```
 
+Fake agents finish instantly. To watch them in the dashboard, start the engine
+with `HERDR_ORCH_FAKE_DELAY_MS=3000` so each one takes a few seconds.
+
 ### Or hand it to an agent
 
 ```text
