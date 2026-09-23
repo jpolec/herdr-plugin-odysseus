@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="904" viewBox="0 0 1400 904">
+<rect width="1400" height="904" rx="22" fill="#0d1117"/>
+<text x="60" y="70" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="34" font-weight="700" fill="#e6edf3">Herdr alone vs. with herdr-orchestrator</text>
+<text x="60" y="106" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#8b949e">Herdr runs your agents. The plugin turns them into a governed workflow.</text>
+<text x="900" y="136" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="17" font-weight="600" fill="#8b949e">Herdr alone</text>
+<text x="1100" y="136" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="17" font-weight="600" fill="#8b949e">+ orchestrator</text>
+<rect x="30" y="150" width="1340" height="46" rx="8" fill="#161b22"/>
+<text x="60" y="179.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Agents in real terminal panes you can watch and type into</text>
+<text x="900" y="180.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1100" y="180.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1126" y="179.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">uses Herdr's panes</text>
+<text x="60" y="225.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Knows if an agent is working, waiting for you, or done</text>
+<text x="900" y="226.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1100" y="226.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1126" y="225.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">uses Herdr's agent state</text>
+<rect x="30" y="242" width="1340" height="46" rx="8" fill="#161b22"/>
+<text x="60" y="271.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Git worktrees as workspaces</text>
+<text x="900" y="272.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1100" y="272.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1126" y="271.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">one per task, automatic</text>
+<text x="60" y="317.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Notifications</text>
+<text x="900" y="318.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1100" y="318.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="1126" y="317.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">when a run needs you</text>
+<rect x="30" y="334" width="1340" height="46" rx="8" fill="#161b22"/>
+<line x1="40" y1="334" x2="1360" y2="334" stroke="#30363d" stroke-width="2"/>
+<text x="60" y="363.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Task queue with parallelism limits</text>
+<text x="900" y="364.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="364.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="60" y="409.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Workflows: agent → tests → review → PR</text>
+<text x="900" y="410.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="410.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<rect x="30" y="426" width="1340" height="46" rx="8" fill="#161b22"/>
+<text x="60" y="455.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Runs tests, sends failures back to the agent (bounded retries)</text>
+<text x="900" y="456.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="456.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="60" y="501.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">A second agent reviews; findings go back to the first</text>
+<text x="900" y="502.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="502.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<rect x="30" y="518" width="1340" height="46" rx="8" fill="#161b22"/>
+<text x="60" y="547.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Policy: secrets, CI, migrations, infra, force-push…</text>
+<text x="900" y="548.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="548.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="60" y="593.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Stops for your approval, with full context, before risky steps</text>
+<text x="900" y="594.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="594.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<rect x="30" y="610" width="1340" height="46" rx="8" fill="#161b22"/>
+<text x="60" y="639.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Verifiable, hash-chained audit trail</text>
+<text x="900" y="640.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="640.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="60" y="685.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Same task ×3 with side-by-side comparison</text>
+<text x="900" y="686.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="686.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<rect x="30" y="702" width="1340" height="46" rx="8" fill="#161b22"/>
+<text x="60" y="731.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Draft PR at the end — never merges or deploys</text>
+<text x="900" y="732.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="732.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="60" y="777.0" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#e6edf3">Resumes a half-finished task after a restart</text>
+<text x="900" y="778.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#f85149">✗</text>
+<text x="1100" y="778.0" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#3fb950">✓</text>
+<text x="60" y="854" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#58a6ff">herdr plugin install jpolec/herdr-plugin-odysseus</text>
+<text x="1340" y="854" text-anchor="end" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="16" fill="#8b949e">github.com/jpolec/herdr-plugin-odysseus · MIT</text>
+</svg>
