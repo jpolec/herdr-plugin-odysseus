@@ -48,22 +48,7 @@ Herdr is deliberately lean: it is the best place to *run* agents, and it leaves
 workflow to plugins. This plugin builds on what Herdr does well and fills in the
 rest.
 
-| | Herdr alone | + herdr-orchestrator |
-| --- | :---: | :---: |
-| Agents in real terminal panes you can watch and type into | ✅ | ✅ *uses Herdr's panes* |
-| Knows whether an agent is working, waiting for you, or done | ✅ | ✅ *uses Herdr's agent state* |
-| Git worktrees as workspaces | ✅ | ✅ *one per task, automatically* |
-| Notifications | ✅ | ✅ *when a run needs you* |
-| Task queue with parallelism limits | ❌ | ✅ |
-| Workflows: agent → tests → review → PR | ❌ | ✅ |
-| Runs your tests and sends failures back to the agent (bounded retries) | ❌ | ✅ |
-| A second agent reviews; findings go back to the first | ❌ | ✅ |
-| Policy: secrets, CI, migrations, infra, force-push… | ❌ | ✅ |
-| Stops for your approval, with full context, before risky steps | ❌ | ✅ |
-| Verifiable, hash-chained audit trail | ❌ | ✅ |
-| Same task ×3 with side-by-side comparison | ❌ | ✅ |
-| Draft PR at the end (never merges or deploys) | ❌ | ✅ |
-| Resumes a half-finished task after a restart | ❌ | ✅ |
+<img src="assets/herdr-comparison.png" alt="Comparison table. Both Herdr alone and herdr-orchestrator: agents in real terminal panes, agent state (working, waiting, done), git worktrees as workspaces, notifications. Only with herdr-orchestrator: task queue with parallelism limits; workflows agent → tests → review → PR; runs tests and sends failures back with bounded retries; a second agent reviews; policy for secrets, CI, migrations, infra and force-push; stops for approval before risky steps; hash-chained audit trail; same task ×3 with side-by-side comparison; draft PR at the end; resumes a half-finished task after a restart." width="100%">
 
 Without the plugin you can do all of this by hand — `herdr worktree create`,
 `herdr agent start`, `herdr agent prompt --wait`, run the tests yourself, paste
