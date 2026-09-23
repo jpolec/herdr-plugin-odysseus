@@ -64,6 +64,9 @@ impl HerdrApi for SocketHerdr {
     fn open_worktree_workspace(&self, repo_root: &Path, worktree: &Path, label: &str) -> HResult<WorkspaceHandle> {
         self.worktree_open_workspace(repo_root, worktree, label)
     }
+    fn close_workspace(&self, workspace_id: &str) -> HResult<()> {
+        self.client.request("workspace.close", json!({"workspace_id": workspace_id}), None).map(|_| ())
+    }
     fn create_tab(&self, workspace_id: &str, cwd: &Path, label: &str, env: &std::collections::BTreeMap<String, String>) -> HResult<TabHandle> {
         self.pane_create_tab(workspace_id, cwd, label, env)
     }

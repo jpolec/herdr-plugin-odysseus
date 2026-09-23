@@ -200,6 +200,14 @@ pub enum RunCmd {
         #[arg(long)]
         step: Option<String>,
     },
+    /// Close the Herdr panes/workspace of a finished run (files stay).
+    Close {
+        /// Run reference; omit with --finished.
+        run: Option<String>,
+        /// All succeeded, failed and cancelled runs.
+        #[arg(long)]
+        finished: bool,
+    },
     /// Open a draft PR for a finished run (e.g. the selected variant).
     Pr {
         run: String,
@@ -731,6 +739,24 @@ fn run_cmd(app: &App, c: RunCmd) -> Result<i32> {
                 (Some(n), _) if herdr.focus_agent(n).is_ok() => {}
                 (_, Some(p)) => herdr.focus_pane(p)?,
                 _ => bail!("agent pane is gone"),
+            }
+            Ok(0)
+        }
+        RunCmd::Close { run, finished } => {
+            let ctx = app.ctx(true)?;
+            let herdr = ctx.herdr.clone().context("Herdr is not reachable")?;
+            let runs: Vec<Run> = match (&run, finished) {
+                (Some(r), _) => vec![ctx.store.resolve_run(r)?],
+                (None, true) => ctx.store.list_runs()?.into_iter().filter(|r| r.status.is_terminal()).collect(),
+                (None, false) => bail!("give a run or --finished"),
+            };
+            for r in runs {
+                if !r.status.is_terminal() {
+                    eprintln!("{} is {}; cancel it first", r.display_name(), r.status.as_str());
+                    continue;
+                }
+                let closed = engine::handoff::close_run_panes(&ctx, herdr.as_ref(), &r, crate::audit::Actor::human(user()));
+                println!("{}: {}", r.display_name(), if closed.is_empty() { "nothing open".to_string() } else { closed.join(", ") });
             }
             Ok(0)
         }

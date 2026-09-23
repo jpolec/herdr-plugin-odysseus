@@ -12,6 +12,29 @@ use crate::audit::{Actor, EventDraft};
 use crate::model::*;
 use crate::policies::{Action, Decision, Subject};
 
+/// Close a finished run's agent panes and its Herdr workspace. Worktree
+/// files and the branch stay on disk. Returns what was closed.
+pub fn close_run_panes(ctx: &EngineCtx, herdr: &dyn crate::herdr::HerdrApi, run: &Run, via: Actor) -> Vec<String> {
+    let mut closed = vec![];
+    let mut panes: Vec<String> = run.steps.iter().filter_map(|e| e.agent.as_ref()).filter(|a| a.mode == "pane").filter_map(|a| a.pane_id.clone()).collect();
+    panes.sort();
+    panes.dedup();
+    for p in panes {
+        if herdr.close_pane(&p).is_ok() {
+            closed.push(format!("pane {p}"));
+        }
+    }
+    if let Some(ws) = &run.herdr.workspace_id {
+        if herdr.close_workspace(ws).is_ok() {
+            closed.push(format!("workspace {ws}"));
+        }
+    }
+    if !closed.is_empty() {
+        ctx.audit(EventDraft::new("herdr_panes_closed", via).run(&run.run_id, &run.task_id).data(serde_json::json!({"closed": closed})));
+    }
+    closed
+}
+
 pub fn select_variant(ctx: &EngineCtx, task_id: &str, run_ref: &str, user: Option<String>) -> Result<Run> {
     let task = ctx.store.load_task(task_id)?;
     let run = ctx.store.resolve_run(run_ref)?;

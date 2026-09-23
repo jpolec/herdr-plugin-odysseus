@@ -78,6 +78,8 @@ fn socket_client_speaks_the_protocol() {
     let e = h.send_keys("x", &["esc"]).unwrap_err();
     assert!(matches!(&e, HerdrError::Api { code, .. } if code == "agent_blocked"));
     assert_eq!(h.read_pane("w1:p2", 50).unwrap(), "hello\n");
+    h.close_pane("w1:p2").unwrap();
+    h.close_workspace("w9").unwrap();
 
     let reqs = log.lock().unwrap().clone();
     let find = |m: &str| reqs.iter().find(|r| r["method"] == m).cloned().unwrap();

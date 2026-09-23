@@ -74,6 +74,11 @@ impl Harness {
         std::fs::write(p, content).unwrap();
     }
 
+    /// Keep agent panes after success (tests that inspect them afterwards).
+    pub fn keep_panes(&self) {
+        self.project_file("config.yaml", "herdr:\n  close_panes_on_success: false\n");
+    }
+
     pub fn workflow(&self, name: &str, steps_yaml: &str) {
         self.project_file(&format!("workflows/{name}.yaml"), &format!("version: 1\nname: {name}\nsteps:\n{steps_yaml}"));
     }

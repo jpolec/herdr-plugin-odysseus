@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.7] - 2026-09-23
+
+### Changed
+- `herdr.close_panes_on_success` now defaults to `true`: when a run succeeds, its agent panes and its Herdr workspace are closed so no agent stays alive holding the task's instructions (an agent left open after a run pushed to `main` by itself). Worktree files and the branch stay. Failed, blocked and cancelled runs keep their panes for inspection.
+
+### Added
+- `herdr-orchestrator run close <run> | --finished`: close the Herdr panes and workspace of finished runs.
+- CI on GitHub Actions (macOS + Linux: build `--locked`, tests, clippy) — written by the orchestrator itself in its first real run.
+
 ## [0.1.6] - 2026-09-23
 
 ### Fixed

@@ -166,7 +166,9 @@ No. The plugin is a separate program: Herdr runs it when you invoke an action, o
 at startup (to resume interrupted work, if any) and for a few milliseconds when a
 pane closes or a worktree is removed (to wake its engine, if it is running). It
 never touches panes it did not create, and a crash in it cannot crash Herdr.
-To switch it off: `herdr plugin disable jpolec.herdr-orchestrator`; to remove it:
+When a run succeeds, its agent panes are closed (files and branch stay), so no
+agent is left running with the task's instructions; failed runs keep theirs for
+you to inspect. To switch it off: `herdr plugin disable jpolec.herdr-orchestrator`; to remove it:
 `herdr plugin uninstall jpolec.herdr-orchestrator`.
 
 **Is it a sandbox?**

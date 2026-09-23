@@ -234,7 +234,9 @@ pub struct HerdrConfig {
     pub socket: Option<String>,
     /// Show Herdr toasts for approvals/blocked agents/completions.
     pub notify: bool,
-    /// Close agent panes when a run succeeds.
+    /// Close the run's agent panes and its Herdr workspace when the run
+    /// succeeds, so no agent stays alive with the task's instructions.
+    /// Failed/blocked runs keep theirs for inspection. Files are untouched.
     pub close_panes_on_success: bool,
     /// Interrupt (ctrl+c) an agent whose step timed out.
     pub interrupt_on_timeout: bool,
@@ -245,7 +247,7 @@ pub struct HerdrConfig {
 
 impl Default for HerdrConfig {
     fn default() -> Self {
-        Self { mode: HerdrMode::Auto, socket: None, notify: true, close_panes_on_success: false, interrupt_on_timeout: true, settle_window: HumanDuration::from_secs(30) }
+        Self { mode: HerdrMode::Auto, socket: None, notify: true, close_panes_on_success: true, interrupt_on_timeout: true, settle_window: HumanDuration::from_secs(30) }
     }
 }
 

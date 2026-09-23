@@ -67,6 +67,8 @@ pub trait HerdrApi: Send + Sync {
 
     // worktree_adapter
     fn open_worktree_workspace(&self, repo_root: &Path, worktree: &Path, label: &str) -> HResult<WorkspaceHandle>;
+    /// Close a workspace in Herdr (its panes); files on disk are untouched.
+    fn close_workspace(&self, workspace_id: &str) -> HResult<()>;
 
     // pane_adapter
     fn create_tab(&self, workspace_id: &str, cwd: &Path, label: &str, env: &BTreeMap<String, String>) -> HResult<TabHandle>;

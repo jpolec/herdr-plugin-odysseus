@@ -249,6 +249,11 @@ impl HerdrApi for MockHerdr {
         let root = Self::new_pane(&mut st, &ws, worktree, None);
         Ok(WorkspaceHandle { workspace_id: ws, root_pane_id: Some(root), already_open: false })
     }
+    fn close_workspace(&self, workspace_id: &str) -> HResult<()> {
+        let mut st = self.check(format!("workspace.close {workspace_id}"))?;
+        st.panes.retain(|_, p| p.workspace_id != workspace_id);
+        Ok(())
+    }
     fn create_tab(&self, workspace_id: &str, cwd: &Path, label: &str, _env: &BTreeMap<String, String>) -> HResult<TabHandle> {
         let mut st = self.check(format!("tab.create {label}"))?;
         let pane = Self::new_pane(&mut st, workspace_id, cwd, Some(label));

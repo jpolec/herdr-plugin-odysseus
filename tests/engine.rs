@@ -458,6 +458,8 @@ fn pane_runner_uses_herdr_panes() {
     // Real Herdr reports agent_pane_busy until the new pane's shell is ready.
     mock.set_busy_starts(3);
     let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    // Keep panes so this test can inspect them (the default closes them).
+    h.project_file("config.yaml", "herdr:\n  close_panes_on_success: false\n");
     let t = h.task("Pane work", "quick-task", Some("claude"));
     let r = &h.settle(&t.task_id)[0];
     assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
@@ -481,6 +483,7 @@ fn pane_runner_uses_herdr_panes() {
 fn pane_retry_reuses_live_agent_session() {
     let mock = Arc::new(MockHerdr::new(pane_behavior("fix-on-retry")));
     let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
     h.workflow("retry", RETRY_WF);
     let t = h.task("Pane retry", "retry", Some("codex"));
     let r = &h.settle(&t.task_id)[0];
@@ -562,6 +565,7 @@ fn recovery_reattaches_to_live_agent_without_resending() {
         MockReaction::Hang
     })));
     let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
     let t = h.task("Survive restart", "quick-task", Some("claude"));
     let tid = t.task_id.clone();
     assert!(h.until(Duration::from_secs(20), |h| h.runs_of(&tid).first().and_then(|r| r.latest_exec("implement").cloned()).is_some_and(|e| e.agent.as_ref().is_some_and(|a| a.prompt_sent) && e.status == StepStatus::Running)));
@@ -642,6 +646,7 @@ fn lost_first_prompt_is_recovered_by_one_reminder() {
         MockReaction::Finish
     })));
     let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
     let t = h.task("Deaf first", "quick-task", Some("codex"));
     let r = &h.settle(&t.task_id)[0];
     assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
@@ -674,6 +679,7 @@ fn early_idle_after_prompt_is_not_trusted() {
         MockReaction::Finish // idle immediately, before the work is done
     })));
     let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.keep_panes();
     h.workflow("rev", "  - id: review\n    type: agent\n    output: review\n    prompt: r\n");
     let t = h.task("Slow reviewer", "rev", Some("claude"));
     let r = &h.settle(&t.task_id)[0];
@@ -681,4 +687,31 @@ fn early_idle_after_prompt_is_not_trusted() {
     assert!(!r.steps[0].parse_failed, "review result must be picked up");
     assert_eq!(r.steps[0].structured.as_ref().unwrap()["verdict"], "approved");
     assert_eq!(mock.prompts(&mock.agent_names()[0]).len(), 1, "no reminder needed");
+}
+
+#[test]
+fn successful_run_closes_its_agent_panes_by_default() {
+    // Real-run finding: an agent left alive after its run pushed to main on
+    // its own. Succeeded runs now close their panes and Herdr workspace.
+    let mock = Arc::new(MockHerdr::new(pane_behavior("success")));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    let t = h.task("Close after", "quick-task", Some("claude"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    assert!(mock.agent_names().is_empty(), "no agent stays alive after success");
+    let calls = mock.calls();
+    assert!(calls.iter().any(|c| c.starts_with("pane.close")));
+    assert!(calls.iter().any(|c| c.starts_with("workspace.close")));
+    assert!(h.events(&r.run_id).contains(&"herdr_panes_closed".to_string()));
+    assert!(r.git.worktree_path.as_ref().unwrap().exists(), "files stay");
+}
+
+#[test]
+fn failed_run_keeps_its_agent_pane_for_inspection() {
+    let mock = Arc::new(MockHerdr::new(Arc::new(|_c: &herdr_orchestrator::herdr::mock::PromptCall| MockReaction::Finish)));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    let t = h.task("Never acts", "quick-task", Some("codex"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Failed);
+    assert_eq!(mock.agent_names().len(), 1, "failed runs keep the agent to look at");
 }

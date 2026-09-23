@@ -590,14 +590,8 @@ impl<'a> RunDriver<'a> {
     }
 
     pub(super) fn close_agent_panes(&self) {
-        for e in &self.run.steps {
-            if let Some(b) = &e.agent {
-                if b.mode == "pane" {
-                    if let (Some(h), Some(p)) = (&self.factory.herdr, &b.pane_id) {
-                        let _ = h.close_pane(p);
-                    }
-                }
-            }
+        if let Some(h) = &self.factory.herdr {
+            super::handoff::close_run_panes(self.ctx, h.as_ref(), &self.run, Actor::orchestrator());
         }
     }
 
