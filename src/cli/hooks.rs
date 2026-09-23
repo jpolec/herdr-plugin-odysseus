@@ -53,7 +53,7 @@ pub fn run(app: &App, h: HookCmd) -> Result<i32> {
             Ok(0)
         }
         HookCmd::Open { view } => {
-            super::open_plugin_pane("dashboard", "overlay", view.as_deref())?;
+            super::open_plugin_pane("dashboard", "popup", view.as_deref())?;
             Ok(0)
         }
         HookCmd::NewTask => {

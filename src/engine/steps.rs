@@ -210,6 +210,7 @@ impl<'a> RunDriver<'a> {
             e.log_path = Some(log_path.clone());
         }
         let _ = std::fs::remove_file(&output_file); // never read a stale result
+        let head_before = crate::git::head_sha(&worktree).ok();
         let slot = match self.ctx.agent_slots.acquire(&self.cancel) {
             Some(s) => s,
             None => return Ok(StepOutcome::Cancelled),
@@ -341,6 +342,16 @@ impl<'a> RunDriver<'a> {
                 .unwrap_or_else(|| crate::checks::excerpt(&outcome.transcript, 0, 30, 4000));
             if raw.is_none() {
                 self.exec_mut(&exec_id).parse_failed = true;
+                // No result file and nothing changed: the agent most likely
+                // never received or acted on the task. Do not report success.
+                let unchanged = !crate::git::is_dirty(&worktree).unwrap_or(true) && crate::git::head_sha(&worktree).ok() == head_before;
+                if unchanged {
+                    let why = "agent finished without writing its result file and without changing anything (was the prompt received?)".to_string();
+                    self.audit("agent_no_result", Actor::agent(&runner_name, outcome.binding.pane_id.clone()), Some(&step.id), serde_json::json!({"reason": why}));
+                    self.finish_exec(&exec_id, StepStatus::Failed, Some(why.clone()))?;
+                    let tail = crate::checks::excerpt(&redact_str(&outcome.transcript), 0, 40, self.cfg.config.output.feedback_max_bytes);
+                    return Ok(StepOutcome::Failed { reason: why, feedback: tail });
+                }
             }
             output_text = Some(redact_str(&text));
         }
@@ -810,7 +821,7 @@ impl<'a> RunDriver<'a> {
             match d.decision {
                 Decision::Deny => denies.push(format!("{} ({})", f.path, d.reason)),
                 Decision::RequireApproval => {
-                    let fingerprint = format!("{}:{}:{}", f.change, f.insertions, f.deletions);
+                    let fingerprint = content_fingerprint(&worktree, f);
                     if self.run.approved_paths.get(&f.path) != Some(&fingerprint) {
                         asks.push((f.path.clone(), d));
                     }
@@ -847,7 +858,7 @@ impl<'a> RunDriver<'a> {
                 Approval::Granted => {
                     for f in &diff.files {
                         if paths.contains(&f.path) {
-                            self.run.approved_paths.insert(f.path.clone(), format!("{}:{}:{}", f.change, f.insertions, f.deletions));
+                            self.run.approved_paths.insert(f.path.clone(), content_fingerprint(&worktree, f));
                         }
                     }
                     if paths.iter().any(|p| p == "<diff-summary>") {
@@ -1079,6 +1090,19 @@ impl<'a> RunDriver<'a> {
         }
         b.push_str(&format!("\nAudit: `herdr-orchestrator audit verify {}`\n", self.run.run_id));
         redact_str(&b)
+    }
+}
+
+/// What a human approved for a path: its content, not its git status, so
+/// committing an approved file (untracked → added) does not re-ask, while
+/// any real change to it does.
+fn content_fingerprint(worktree: &std::path::Path, f: &ChangedFile) -> String {
+    if f.change == "deleted" {
+        return "deleted".into();
+    }
+    match std::fs::read(worktree.join(&f.path)) {
+        Ok(b) => format!("sha256:{}", crate::store::sha256_hex(&b)),
+        Err(_) => format!("{}:{}:{}", f.change, f.insertions, f.deletions),
     }
 }
 

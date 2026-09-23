@@ -460,7 +460,9 @@ pub fn main() -> Result<i32> {
 }
 
 fn plan_cmd(app: &App, text: &str, o: &TaskOpts) -> Result<i32> {
-    let ctx = app.ctx(false)?;
+    // Connect to Herdr (read-only ping) so the plan shows pane vs headless
+    // exactly as a real run would choose.
+    let ctx = app.ctx(true)?;
     let repo = app.repo()?;
     let title = text.lines().next().unwrap_or("task");
     let lines = engine::plan::plan(&ctx, &repo, title, o.workflow.as_deref(), o.runner.as_deref(), o.base.as_deref(), o.variants)?;

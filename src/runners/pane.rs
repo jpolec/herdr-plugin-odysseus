@@ -130,6 +130,21 @@ impl PaneRunner {
         }
     }
 
+    /// Wait until the agent has been idle and input-ready for two
+    /// consecutive observations a second apart (bounded to 20s).
+    fn wait_stable_idle(&self, target: &str, cancel: &CancelToken) {
+        let until = Instant::now() + Duration::from_secs(20);
+        let mut stable = 0;
+        while stable < 2 && Instant::now() < until && !cancel.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(1000));
+            match self.herdr.get_agent(target) {
+                Ok(Some(i)) if i.agent_status.is_settled() && i.interactive_ready => stable += 1,
+                Ok(Some(_)) => stable = 0,
+                _ => return,
+            }
+        }
+    }
+
     /// Core wait loop after the prompt was submitted.
     fn wait_settled(
         &self,
@@ -261,6 +276,9 @@ impl AgentRunner for PaneRunner {
                 b.terminal_id = info.terminal_id;
                 b.last_status = Some(info.agent_status.as_str().into());
                 b.agent_session = info.agent_session.and_then(|s| s.value);
+                // Agents keep initializing after Herdr reports them ready
+                // (update banners, MCP servers…); input typed then is lost.
+                self.wait_stable_idle(&name, cancel);
             }
             Err(HerdrError::Api { code, message }) if code == "agent_not_ready" || code == "timeout" => {
                 // Blocked at startup (e.g. trust prompt): let a human handle it.
@@ -284,53 +302,23 @@ impl AgentRunner for PaneRunner {
         cancel: &CancelToken,
         events: &mut dyn FnMut(AgentEvent),
     ) -> Result<AgentOutcome> {
-        let target = Self::target(b)?;
-        // A reused agent already knows the task; send the compact prompt.
-        let reused = req.previous.as_ref().and_then(|p| p.agent_name.clone()) == b.agent_name && req.previous.is_some();
-        let text = if reused { &req.followup_prompt } else { &req.prompt };
-        if let Some(end) = self.wait_ready(&target, b, deadline, cancel, events)? {
-            return Ok(self.outcome(req, b, end));
+        let first = self.send_once(req, b, deadline, cancel, events, None)?;
+        if first.end != AgentEnd::Completed || first.output_file_text.is_some() {
+            return Ok(first);
         }
-        events(AgentEvent::PromptSending);
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match self.herdr.prompt_agent(&target, text, Some((SETTLED, CHUNK.min(remaining)))) {
-            Ok(info) => {
-                b.prompt_sent = true;
-                events(AgentEvent::PromptSent);
-                b.last_status = Some(info.agent_status.as_str().into());
-                if info.agent_status.is_settled() {
-                    return Ok(self.outcome(req, b, AgentEnd::Completed));
-                }
-            }
-            Err(e) if e.is_wait_timeout() => {
-                b.prompt_sent = true;
-                events(AgentEvent::PromptSent);
-            }
-            Err(HerdrError::Api { code, message }) if code == "agent_prompt_stalled" => {
-                // Herdr saw no activity within 5s. The text may or may not
-                // have reached the agent: do not resend blindly.
-                b.prompt_sent = true;
-                events(AgentEvent::PromptSent);
-                match self.herdr.get_agent(&target) {
-                    Ok(Some(i)) if matches!(i.agent_status, AgentStatus::Working | AgentStatus::Blocked) => {}
-                    _ => return Ok(self.outcome(req, b, AgentEnd::Stalled(format!("prompt stalled: {message}")))),
-                }
-            }
-            Err(HerdrError::Api { code, .. }) if code == "agent_blocked" => {
-                events(AgentEvent::Blocked("agent was blocked before the prompt could be sent".into()));
-                if let Some(end) = self.wait_ready(&target, b, deadline, cancel, events)? {
-                    return Ok(self.outcome(req, b, end));
-                }
-                return self.send_and_wait(req, b, deadline, cancel, events);
-            }
-            Err(e) if e.is_not_found() || e.code() == Some("agent_not_found") => {
-                return Ok(self.outcome(req, b, AgentEnd::Lost(self.lost_reason(b))));
-            }
-            Err(e) => return Err(e.into()),
-        }
-        self.wait_settled(req, b, deadline, cancel, events)
+        // The agent settled without writing its result file: the prompt may
+        // have been lost (e.g. typed while the agent was still starting).
+        // Remind it once; the reminder is safe to receive twice.
+        let reminder = format!(
+            "You have not written the result file yet: {}\n\
+             If you have not started the task below, do it now. If you already \
+             finished it, do not redo any work: only write the result file.\n\n{}",
+            req.output_file.display(),
+            req.followup_prompt
+        );
+        tracing::info!("agent settled without a result file; sending one reminder");
+        self.send_once(req, b, deadline, cancel, events, Some(reminder))
     }
-
     fn attach(
         &self,
         req: &AgentRequest,
@@ -367,4 +355,68 @@ impl AgentRunner for PaneRunner {
         }
         Ok(())
     }
+}
+
+
+impl PaneRunner {
+    fn send_once(
+        &self,
+        req: &AgentRequest,
+        b: &mut AgentBinding,
+        deadline: Instant,
+        cancel: &CancelToken,
+        events: &mut dyn FnMut(AgentEvent),
+        override_text: Option<String>,
+    ) -> Result<AgentOutcome> {
+        let target = Self::target(b)?;
+        // A reused agent already knows the task; send the compact prompt.
+        let reused = req.previous.as_ref().and_then(|p| p.agent_name.clone()) == b.agent_name && req.previous.is_some();
+        let text = match &override_text {
+            Some(t) => t,
+            None if reused => &req.followup_prompt,
+            None => &req.prompt,
+        };
+        if let Some(end) = self.wait_ready(&target, b, deadline, cancel, events)? {
+            return Ok(self.outcome(req, b, end));
+        }
+        events(AgentEvent::PromptSending);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match self.herdr.prompt_agent(&target, text, Some((SETTLED, CHUNK.min(remaining)))) {
+            Ok(info) => {
+                b.prompt_sent = true;
+                events(AgentEvent::PromptSent);
+                b.last_status = Some(info.agent_status.as_str().into());
+                if info.agent_status.is_settled() {
+                    return Ok(self.outcome(req, b, AgentEnd::Completed));
+                }
+            }
+            Err(e) if e.is_wait_timeout() => {
+                b.prompt_sent = true;
+                events(AgentEvent::PromptSent);
+            }
+            Err(HerdrError::Api { code, message }) if code == "agent_prompt_stalled" => {
+                // Herdr saw no activity within 5s. The text may or may not
+                // have reached the agent: do not resend blindly.
+                b.prompt_sent = true;
+                events(AgentEvent::PromptSent);
+                match self.herdr.get_agent(&target) {
+                    Ok(Some(i)) if matches!(i.agent_status, AgentStatus::Working | AgentStatus::Blocked) => {}
+                    _ => return Ok(self.outcome(req, b, AgentEnd::Stalled(format!("prompt stalled: {message}")))),
+                }
+            }
+            Err(HerdrError::Api { code, .. }) if code == "agent_blocked" => {
+                events(AgentEvent::Blocked("agent was blocked before the prompt could be sent".into()));
+                if let Some(end) = self.wait_ready(&target, b, deadline, cancel, events)? {
+                    return Ok(self.outcome(req, b, end));
+                }
+                return self.send_once(req, b, deadline, cancel, events, override_text);
+            }
+            Err(e) if e.is_not_found() || e.code() == Some("agent_not_found") => {
+                return Ok(self.outcome(req, b, AgentEnd::Lost(self.lost_reason(b))));
+            }
+            Err(e) => return Err(e.into()),
+        }
+        self.wait_settled(req, b, deadline, cancel, events)
+    }
+
 }

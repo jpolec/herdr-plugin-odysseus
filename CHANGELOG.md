@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.2] - 2026-09-23
+
+Findings from the first real run (the plugin adding CI to its own repository).
+
+### Fixed
+- A prompt typed while an agent was still starting (update banner, MCP servers) was lost and the step "succeeded" with no changes. The runner now waits until the agent is stably idle before the first prompt, sends one reminder if the agent settles without its result file, and fails the step if there is still no result and no change.
+- An approved file was asked about again after it was committed (its git status changed from untracked to added). Approvals now remember the file's content hash.
+- `plan` showed headless mode even when Herdr was available.
+
+### Changed
+- The dashboard opens as a 92% popup (like lazygit/btop); `f` on a run closes it and jumps to the agent's pane.
+- README: "Herdr alone vs. with herdr-orchestrator" comparison.
+
 ## [0.1.1] - 2026-09-23
 
 ### Added

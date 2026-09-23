@@ -42,6 +42,34 @@ you — without hiding the agents. It never runs them headless behind your back:
 they are ordinary Herdr panes (`#124 implement · codex`) you can read, type into,
 or close.
 
+## Herdr alone vs. with herdr-orchestrator
+
+Herdr is deliberately lean: it is the best place to *run* agents, and it leaves
+workflow to plugins. This plugin builds on what Herdr does well and fills in the
+rest.
+
+| | Herdr alone | + herdr-orchestrator |
+| --- | :---: | :---: |
+| Agents in real terminal panes you can watch and type into | ✅ | ✅ *uses Herdr's panes* |
+| Knows whether an agent is working, waiting for you, or done | ✅ | ✅ *uses Herdr's agent state* |
+| Git worktrees as workspaces | ✅ | ✅ *one per task, automatically* |
+| Notifications | ✅ | ✅ *when a run needs you* |
+| Task queue with parallelism limits | ❌ | ✅ |
+| Workflows: agent → tests → review → PR | ❌ | ✅ |
+| Runs your tests and sends failures back to the agent (bounded retries) | ❌ | ✅ |
+| A second agent reviews; findings go back to the first | ❌ | ✅ |
+| Policy: secrets, CI, migrations, infra, force-push… | ❌ | ✅ |
+| Stops for your approval, with full context, before risky steps | ❌ | ✅ |
+| Verifiable, hash-chained audit trail | ❌ | ✅ |
+| Same task ×3 with side-by-side comparison | ❌ | ✅ |
+| Draft PR at the end (never merges or deploys) | ❌ | ✅ |
+| Resumes a half-finished task after a restart | ❌ | ✅ |
+
+Without the plugin you can do all of this by hand — `herdr worktree create`,
+`herdr agent start`, `herdr agent prompt --wait`, run the tests yourself, paste
+failures back, start a reviewer, check the diff, open the PR. The plugin runs that
+loop for you and enforces your rules along the way.
+
 ## What you get
 
 <img src="assets/dashboard.svg" alt="Illustration of the orchestrator pane: running runs with per-step status, a run waiting for approval, the queue and recent runs" width="100%">
@@ -78,7 +106,8 @@ herdr plugin install jpolec/herdr-plugin-odysseus
 Herdr shows what the plugin will run, then builds it with Cargo (about a minute,
 without progress output — let it finish).
 
-**2. Add a key** to `~/.config/herdr/config.toml`, then `herdr server reload-config`:
+**2. Add a key** to `~/.config/herdr/config.toml`, then `herdr server reload-config`
+(on macOS `alt` is the ⌥ Option key: press `ctrl+b`, release, then `⌥O`):
 
 ```toml
 [[keys.command]]
@@ -92,8 +121,9 @@ description = "orchestrator"
 take it. The plugin never edits your config.)
 
 **3. Open a repository workspace in Herdr, press `prefix+alt+o`, then `n`**, type
-the task, pick a workflow and runner, `ctrl+s`. Watch the run on the dashboard;
-the agent appears as a new tab in a workspace for its worktree.
+the task, pick a workflow and runner, `ctrl+s`. The orchestrator opens as a popup
+(like lazygit); `q` closes it and your runs keep going. The agent appears as a new
+tab in a workspace for its worktree — `f` on a run jumps straight to it.
 
 > [!IMPORTANT]
 > **No restart needed.** The engine starts on demand when you create a task; it is

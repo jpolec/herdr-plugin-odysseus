@@ -65,6 +65,8 @@ pub struct State {
     pub paused: bool,
     pub daemon_up: bool,
     pub popup_mode: bool,
+    /// Running as a Herdr popup (modal): jumping to an agent closes it.
+    pub in_popup: bool,
 }
 
 impl State {
@@ -81,6 +83,7 @@ impl State {
             paused: false,
             daemon_up: false,
             popup_mode: false,
+            in_popup: false,
         }
     }
 
@@ -156,6 +159,8 @@ pub fn run(app: &CliApp, new_task: bool, view: Option<&str>) -> Result<()> {
     };
     let mut state = State::new(screen.clone());
     state.popup_mode = new_task;
+    // Herdr popups get no HERDR_PANE_ID (they are not panes).
+    state.in_popup = std::env::var_os("HERDR_PLUGIN_ENTRYPOINT_ID").is_some() && std::env::var_os("HERDR_PANE_ID").is_none();
     if new_task {
         state.form = Some(new_form(app, &ctx));
     }
@@ -222,21 +227,22 @@ fn selected_run(state: &State) -> Option<Run> {
     }
 }
 
-fn focus_agent(app: &CliApp, run: &Run, step: Option<&str>) -> Result<String> {
+/// Focus the run's agent pane. Returns (message, focused).
+fn focus_agent(app: &CliApp, run: &Run, step: Option<&str>) -> Result<(String, bool)> {
     let ctx = app.ctx(true)?;
-    let Some(h) = ctx.herdr.clone() else { return Ok("Herdr is not reachable".into()) };
+    let Some(h) = ctx.herdr.clone() else { return Ok(("Herdr is not reachable".into(), false)) };
     let b = run.steps.iter().rev().filter(|e| step.is_none_or(|s| e.step_id == s)).find_map(|e| e.agent.clone().filter(|a| a.mode == "pane"));
-    let Some(b) = b else { return Ok("no agent pane for this run".into()) };
+    let Some(b) = b else { return Ok(("no agent pane for this run".into(), false)) };
     if let Some(n) = &b.agent_name {
         if h.focus_agent(n).is_ok() {
-            return Ok(format!("focused {n}"));
+            return Ok((format!("focused {n}"), true));
         }
     }
     if let Some(p) = &b.pane_id {
         h.focus_pane(p)?;
-        return Ok(format!("focused pane {p}"));
+        return Ok((format!("focused pane {p}"), true));
     }
-    Ok("agent pane is gone".into())
+    Ok(("agent pane is gone".into(), false))
 }
 
 fn diff_screen(run: &Run) -> Screen {
@@ -422,7 +428,11 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
                     Screen::RunDetail(_) => r.steps.get(state.selected).map(|e| e.step_id.clone()),
                     _ => None,
                 };
-                let m = focus_agent(app, &r, step.as_deref()).unwrap_or_else(|e| format!("{e:#}"));
+                let (m, focused) = focus_agent(app, &r, step.as_deref()).unwrap_or_else(|e| (format!("{e:#}"), false));
+                if focused && state.in_popup {
+                    // A modal popup would sit on top of the agent: get out of the way.
+                    return Ok(true);
+                }
                 state.flash(m);
             }
         }

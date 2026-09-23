@@ -6,7 +6,7 @@
 # fetching the crates pinned in Cargo.lock.
 id = "jpolec.herdr-orchestrator"
 name = "Herdr Orchestrator"
-version = "0.1.1"
+version = "0.1.2"
 min_herdr_version = "0.9.0"
 description = "Tasks → workflows → agents in Herdr panes → checks, retries, review, policy, approvals, audit, draft PR"
 platforms = ["linux", "macos"]
@@ -59,7 +59,9 @@ command = ["./target/release/herdr-orchestrator", "hook", "event"]
 [[panes]]
 id = "dashboard"
 title = "Orchestrator"
-placement = "overlay"
+placement = "popup"
+width = "92%"
+height = "92%"
 command = ["./target/release/herdr-orchestrator", "ui"]
 
 [[panes]]

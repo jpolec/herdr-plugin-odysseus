@@ -165,6 +165,20 @@ fn policy_ask_requires_approval_for_migrations() {
 }
 
 #[test]
+fn approved_file_is_not_reasked_after_commit() {
+    // Real-run finding: approval was re-requested once the approved
+    // untracked file became "added" after the commit.
+    let mut h = Harness::new();
+    h.workflow("two", "  - id: implement\n    type: agent\n    runner: fake-touch-migration\n    prompt: x\n  - id: review\n    type: agent\n    runner: fake-noop\n    prompt: y\n");
+    let t = h.task("Migration then review", "two", None);
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    h.decide(&r.run_id, true);
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    assert_eq!(r.approvals.len(), 1, "same content, one approval");
+}
+
+#[test]
 fn command_policy_deny_fails_safely_without_retry() {
     let mut h = Harness::new();
     h.workflow(
@@ -615,4 +629,33 @@ fn recovery_of_interrupted_command_needs_human_but_check_reruns() {
     h.ctx.store.update_control(&run.run_id, |c| *c = Default::default()).unwrap();
     let reports = herdr_orchestrator::recovery::recover_all(&h.ctx).unwrap();
     assert_eq!(reports[0].classification, herdr_orchestrator::recovery::Classification::NeedsHuman, "{}", reports[0].reason);
+}
+
+#[test]
+fn lost_first_prompt_is_recovered_by_one_reminder() {
+    // Real-Herdr finding: Codex dropped the first prompt while still starting.
+    let mock = Arc::new(MockHerdr::new(Arc::new(|c: &herdr_orchestrator::herdr::mock::PromptCall| {
+        if c.prompt_index > 0 {
+            assert!(c.prompt.contains("You have not written the result file yet"));
+            herdr_orchestrator::runners::fake::perform("success", &c.cwd, &output_path(&c.prompt), "implement", 1).unwrap();
+        }
+        MockReaction::Finish
+    })));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    let t = h.task("Deaf first", "quick-task", Some("codex"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    assert_eq!(mock.prompts(&mock.agent_names()[0]).len(), 2);
+    assert!(!r.steps[0].parse_failed);
+}
+
+#[test]
+fn agent_that_never_acts_fails_instead_of_passing_empty() {
+    let mock = Arc::new(MockHerdr::new(Arc::new(|_c: &herdr_orchestrator::herdr::mock::PromptCall| MockReaction::Finish)));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    let t = h.task("Never acts", "quick-task", Some("codex"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Failed);
+    assert!(r.status_reason.as_deref().unwrap().contains("without writing its result file"), "{:?}", r.status_reason);
+    assert!(h.events(&r.run_id).contains(&"agent_no_result".to_string()));
 }
