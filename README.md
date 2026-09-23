@@ -3,6 +3,7 @@
 <img src="assets/banner.svg" alt="herdr-orchestrator — Odysseus: governed multi-agent workflows, native to Herdr" width="100%">
 
 <a href="https://github.com/jpolec/herdr-plugin-odysseus/releases"><img src="https://img.shields.io/github/v/tag/jpolec/herdr-plugin-odysseus?style=flat-square&label=version&color=1f6feb" alt="Version"></a>
+<a href="https://github.com/jpolec/herdr-plugin-odysseus/actions/workflows/ci.yml"><img src="https://github.com/jpolec/herdr-plugin-odysseus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-%E2%89%A5%200.9.0-1f6feb?style=flat-square" alt="Herdr 0.9.0+"></a>
 <img src="https://img.shields.io/badge/rust-stable-1f6feb?style=flat-square" alt="Rust stable">
 <img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux-supported-1f6feb?style=flat-square" alt="macOS and Linux">
