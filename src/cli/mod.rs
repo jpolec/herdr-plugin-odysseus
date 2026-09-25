@@ -107,6 +107,9 @@ pub enum Cmd {
     /// GitHub issues, milestones and Projects for epics and tasks.
     #[command(subcommand)]
     Tracker(TrackerCmd),
+    /// Production errors from Sentry → reproduce-first fix tasks.
+    #[command(subcommand)]
+    Incidents(IncidentsCmd),
     /// Everything that needs you, most urgent first, with risk and reasons.
     Inbox {
         /// How far back finished work is listed (default 24h).
@@ -237,6 +240,26 @@ pub enum TrackerCmd {
         /// Create the tasks (default: only list).
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum IncidentsCmd {
+    /// Unresolved Sentry issues (sentry.org / sentry.project, SENTRY_AUTH_TOKEN).
+    List {
+        #[arg(long, default_value = "24h")]
+        since: String,
+    },
+    /// Show what an incident task would get (the redacted error details).
+    Show { issue: String },
+    /// Queue a fix task: a failing reproduction test first, then the fix.
+    Task {
+        /// Sentry issue id or short id (e.g. BACKEND-1A2).
+        issue: String,
+        #[arg(long, short)]
+        runner: Option<String>,
+        #[arg(long, short)]
+        workflow: Option<String>,
     },
 }
 
@@ -687,6 +710,35 @@ pub fn main() -> Result<i32> {
         Cmd::Eval(c) => eval_cmd(&app, c),
         Cmd::Inbox { since } => inbox_cmd(&app, &since),
         Cmd::Tracker(c) => tracker_cmd(&app, c),
+        Cmd::Incidents(c) => {
+            let ctx = app.ctx(false)?;
+            let repo = app.repo()?;
+            let cfg = ctx.load_config(Some(&repo))?.config.sentry;
+            match c {
+                IncidentsCmd::List { since } => {
+                    let list = engine::incidents::list(&cfg, &since)?;
+                    if app.cli_json {
+                        return app.print_json(&list).map(|_| 0);
+                    }
+                    if list.is_empty() {
+                        println!("no unresolved issues in the last {since}");
+                    }
+                    for i in list {
+                        println!("{:<16} {:>7}× {:>5} users  {}  — {}", i.short_id, i.count.as_str().map(String::from).unwrap_or_else(|| i.count.to_string()), i.user_count, i.title.chars().take(70).collect::<String>(), i.culprit);
+                    }
+                }
+                IncidentsCmd::Show { issue } => {
+                    let i = engine::incidents::list(&cfg, "14d")?.into_iter().find(|x| x.id == issue || x.short_id.eq_ignore_ascii_case(&issue)).with_context(|| format!("no unresolved issue {issue}"))?;
+                    print!("{}", engine::incidents::describe(&cfg, &i)?);
+                }
+                IncidentsCmd::Task { issue, runner, workflow } => {
+                    let t = engine::incidents::start(&ctx, &repo, &issue, runner, workflow)?;
+                    println!("queued #{} — {} (workflow {})", t.task_id, t.title, t.options.workflow.clone().unwrap_or_default());
+                    app.ensure_daemon()?;
+                }
+            }
+            Ok(0)
+        }
         Cmd::Learn { all, list, runner } => {
             let ctx = app.ctx(false)?;
             let repo = app.repo()?;

@@ -43,6 +43,8 @@ pub struct Config {
     pub usage: UsageConfig,
     pub guard: GuardConfig,
     pub epic: EpicConfig,
+    /// Production errors from Sentry (`incidents`). Token: SENTRY_AUTH_TOKEN.
+    pub sentry: crate::engine::incidents::SentryConfig,
     /// Runner profile overrides keyed by runner name.
     pub runners: BTreeMap<String, RunnerProfileConfig>,
     /// Named check commands (`tests`, `lint`, `security`) as argv arrays.
@@ -69,6 +71,7 @@ impl Default for Config {
             usage: Default::default(),
             guard: Default::default(),
             epic: Default::default(),
+            sentry: Default::default(),
             runners: BTreeMap::new(),
             checks: BTreeMap::new(),
         }
