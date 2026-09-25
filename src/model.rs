@@ -508,6 +508,9 @@ pub struct StepExecution {
     pub usage: Option<UsageRecord>,
     #[serde(default)]
     pub changed_files: Option<usize>,
+    /// Why the step waits for a human although the agent is busy (watchdog).
+    #[serde(default)]
+    pub attention: Option<String>,
 }
 
 impl StepExecution {
@@ -534,6 +537,7 @@ impl StepExecution {
             approval_id: None,
             usage: None,
             changed_files: None,
+            attention: None,
         }
     }
 

@@ -628,6 +628,26 @@ impl<'a> RunDriver<'a> {
                 }
                 self.audit("agent_unblocked", Actor::agent(runner, None), Some(step_id), serde_json::json!({}));
             }
+            AgentEvent::Stuck(why) => {
+                self.exec_mut(exec_id).attention = Some(why.clone());
+                if self.exec_mut(exec_id).status == StepStatus::Running {
+                    self.set_exec_status(exec_id, StepStatus::AwaitingHuman)?;
+                } else {
+                    self.save()?;
+                }
+                let pane = self.exec_mut(exec_id).agent.as_ref().and_then(|a| a.pane_id.clone());
+                self.audit("agent_stuck", Actor::orchestrator(), Some(step_id), serde_json::json!({"reason": why, "pane_id": pane}));
+                self.notify(&format!("{} looks stuck", self.run.display_name()), &format!("{step_id} · {runner}: {why}"), true);
+            }
+            AgentEvent::Progressing => {
+                self.exec_mut(exec_id).attention = None;
+                if self.exec_mut(exec_id).status == StepStatus::AwaitingHuman {
+                    self.set_exec_status(exec_id, StepStatus::Running)?;
+                } else {
+                    self.save()?;
+                }
+                self.audit("agent_progressing", Actor::orchestrator(), Some(step_id), serde_json::json!({}));
+            }
         }
         Ok(())
     }

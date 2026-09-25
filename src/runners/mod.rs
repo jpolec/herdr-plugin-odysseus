@@ -9,6 +9,7 @@ pub mod headless;
 pub mod pane;
 pub mod profiles;
 pub mod shell;
+pub mod watchdog;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -77,6 +78,10 @@ pub enum AgentEvent {
     /// Agent is waiting for a human inside its own UI.
     Blocked(String),
     Unblocked,
+    /// The watchdog thinks the agent is busy without progress.
+    Stuck(String),
+    /// The agent made progress again after `Stuck`.
+    Progressing,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -170,6 +175,7 @@ pub struct RunnerFactory {
     pub interrupt_on_timeout: bool,
     pub pane_read_lines: u32,
     pub settle_window: Duration,
+    pub watchdog: watchdog::WatchdogConfig,
 }
 
 impl RunnerFactory {
@@ -186,7 +192,7 @@ impl RunnerFactory {
             RunnerMode::Shell => Box::new(shell::ShellRunner::new(name)),
             RunnerMode::Headless => Box::new(headless::HeadlessRunner::new(name)),
             RunnerMode::Pane => match &self.herdr {
-                Some(h) => Box::new(pane::PaneRunner::new(name, h.clone(), self.interrupt_on_timeout, self.pane_read_lines).with_settle_window(self.settle_window)),
+                Some(h) => Box::new(pane::PaneRunner::new(name, h.clone(), self.interrupt_on_timeout, self.pane_read_lines).with_settle_window(self.settle_window).with_watchdog(self.watchdog.clone())),
                 None if self.herdr_required => {
                     anyhow::bail!("runner {name} needs Herdr (herdr.mode: required) but Herdr is not reachable")
                 }
