@@ -205,6 +205,31 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base_sha: &str) -> R
     Ok(WorktreeOutcome::Created)
 }
 
+/// Check out an *existing* branch into a new worktree (follow-up work on a
+/// finished run whose worktree was removed). Never moves or resets the branch.
+pub fn attach_worktree(repo: &Path, path: &Path, branch: &str) -> Result<WorktreeOutcome> {
+    validate_branch_name(repo, branch)?;
+    for w in worktree_list(repo)? {
+        if same_path(&w.path, path) && w.branch.as_deref() == Some(branch) {
+            return Ok(WorktreeOutcome::Existing);
+        }
+        if w.branch.as_deref() == Some(branch) {
+            bail!("branch {branch} is already checked out at {}", w.path.display());
+        }
+    }
+    if !branch_exists(repo, branch) {
+        bail!("branch {branch} does not exist");
+    }
+    if path.exists() && std::fs::read_dir(path).map(|mut d| d.next().is_some()).unwrap_or(true) {
+        bail!("{} already exists and is not an empty directory", path.display());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    git(repo, &["worktree", "add", &path.to_string_lossy(), branch])?;
+    Ok(WorktreeOutcome::Created)
+}
+
 /// Remove a worktree only if it is clean. Never deletes the branch.
 pub fn remove_worktree_if_clean(repo: &Path, path: &Path) -> Result<()> {
     if is_dirty(path)? {
@@ -319,6 +344,33 @@ pub fn changed_files(worktree: &Path, base_sha: &str) -> Result<DiffStat> {
         deletions: files.iter().map(|f| f.deletions).sum(),
         files,
     })
+}
+
+/// Lines a change adds relative to `base_sha` (content-based policy
+/// criteria). Bounded: at most `max_lines` lines of at most 1 KiB each;
+/// untracked files are read directly (up to 1 MiB).
+pub fn added_lines(worktree: &Path, base_sha: &str, f: &ChangedFile, max_lines: usize) -> Vec<String> {
+    let clip = |l: &str| l.chars().take(1024).collect::<String>();
+    if f.change == "deleted" {
+        return vec![];
+    }
+    if f.change == "untracked" {
+        let full = worktree.join(&f.path);
+        return match std::fs::symlink_metadata(&full) {
+            Ok(md) if md.is_file() && md.len() <= 1024 * 1024 => std::fs::read_to_string(&full).map(|t| t.lines().take(max_lines).map(clip).collect()).unwrap_or_default(),
+            _ => vec![],
+        };
+    }
+    let out = match git(worktree, &["diff", "--no-color", "--no-ext-diff", "-U0", base_sha, "--", &f.path]) {
+        Ok(o) => o,
+        Err(_) => return vec![],
+    };
+    out.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).take(max_lines).map(|l| clip(&l[1..])).collect()
+}
+
+/// `true` when `commit` is reachable from `rev` (it has been merged into it).
+pub fn is_ancestor(repo: &Path, commit: &str, rev: &str) -> bool {
+    git(repo, &["merge-base", "--is-ancestor", commit, rev]).is_ok()
 }
 
 fn bytecount_lines(b: &[u8]) -> u64 {

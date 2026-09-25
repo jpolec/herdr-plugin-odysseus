@@ -32,7 +32,10 @@ setup).
   (`runners/profiles.rs`); worktree-scoped cwd; diff policy gate after each
   agent step (`engine/steps.rs::diff_policy_gate`); independent review step
   in shipped workflows; orchestrator never pushes/opens PRs without policy
-  (approval by default).
+  (approval by default). Changes to agent instruction files and orchestrator
+  policy, deleted tests, test runner config and added test skips need
+  approval (default policy); Claude's `PreToolUse` hook blocks DENY-level
+  tool calls before they run.
 - **Residual:** an agent that is allowed to run shell commands (by the user
   answering its prompts, or a looser permission config) can do anything the
   user can, including network access. Not preventable here.
@@ -48,6 +51,13 @@ setup).
   schema-validated; invalid output is flagged, gated reviews fail closed.
 - **Residual:** prompt injection against the model is not solvable by the
   orchestrator. Human approval before PR is the backstop.
+- **ADRs, epic plans and PR feedback** are the same kind of input. ADR text,
+  plan tasks and GitHub review comments only reach prompts (`{{task}}`,
+  `{{acceptance}}`); planning and conformance agents are read-only (any
+  change fails the step). Planner-proposed verification commands are shown
+  at `epic show` and become check steps only when a human accepts the plan,
+  must be template-free argv arrays, and are still policy-checked when they
+  run. Nothing from a plan or a PR starts without a human.
 
 ### 3. Malicious dependency install scripts
 - **Threat:** `npm install`, `pip install`, build scripts run arbitrary code.
@@ -252,6 +262,7 @@ setup).
 ## Known gaps (tracked)
 
 - No OS sandbox (`ExecutionSandbox` only `none`).
-- No real-time interception of agent tool calls (Herdr offers none).
+- No real-time interception of agent tool calls except Claude's
+  `PreToolUse` hook (DENY rules only; Herdr offers nothing generic).
 - Pane agents inherit Herdr's environment.
 - Audit not signed.

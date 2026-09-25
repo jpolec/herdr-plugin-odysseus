@@ -88,7 +88,7 @@ impl Harness {
     }
 
     pub fn task_with(&self, text: &str, options: TaskOptions) -> Task {
-        create_task(&self.ctx, NewTask { text: text.into(), title: None, repo: self.repo.clone(), options, via: "test".into(), source: None }).unwrap()
+        create_task(&self.ctx, NewTask { text: text.into(), title: None, repo: self.repo.clone(), options, via: "test".into(), source: None, ..Default::default() }).unwrap()
     }
 
     pub fn runs_of(&self, task_id: &str) -> Vec<Run> {
@@ -156,9 +156,13 @@ pub fn fake_gh(dir: &Path) -> PathBuf {
     std::fs::write(
         &bin,
         format!(
-            "#!/bin/sh\necho \"$@\" >> {log}\ncase \"$1 $2\" in\n  'pr list') if [ -f {state} ]; then cat {state}; else echo '[]'; fi;;\n  'pr create') echo '[{{\"number\":7,\"url\":\"https://github.com/o/r/pull/7\",\"state\":\"OPEN\",\"isDraft\":true}}]' > {state}; echo 'https://github.com/o/r/pull/7';;\n  '--version ') echo 'gh version 2.0.0';;\n  *) exit 1;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> {log}\ncase \"$1 $2\" in\n  'pr list') if [ -f {state} ]; then cat {state}; else echo '[]'; fi;;\n  'pr create') echo '[{{\"number\":7,\"url\":\"https://github.com/o/r/pull/7\",\"state\":\"OPEN\",\"isDraft\":true}}]' > {state}; echo 'https://github.com/o/r/pull/7';;\n  'pr view') if [ -f {view} ]; then cat {view}; else echo '{{\"state\":\"OPEN\"}}'; fi;;
+  'api repos/o/r/pulls/7/comments') if [ -f {inline} ]; then cat {inline}; else echo '[]'; fi;;
+  '--version ') echo 'gh version 2.0.0';;\n  *) exit 1;;\nesac\n",
             log = dir.join("gh.log").display(),
-            state = dir.join("gh-prs.json").display()
+            state = dir.join("gh-prs.json").display(),
+            view = dir.join("gh-view.json").display(),
+            inline = dir.join("gh-inline.json").display()
         ),
     )
     .unwrap();

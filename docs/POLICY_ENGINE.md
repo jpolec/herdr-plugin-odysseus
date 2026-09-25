@@ -40,8 +40,9 @@ rules:
 
 Unknown keys are rejected. A rule must have at least one criterion among
 `actions`, `paths`, `commands`, `command_tags`, `runners`,
-`min_deleted_files`, `min_deleted_lines`, `min_files_changed` — a rule that
-would match everything is refused. Unknown `command_tags` are refused.
+`min_deleted_files`, `min_deleted_lines`, `min_files_changed`,
+`added_lines` — a rule that would match everything is refused. Unknown
+`command_tags` and invalid `added_lines` regular expressions are refused.
 
 ### Criteria (`match:`)
 
@@ -61,6 +62,7 @@ would match everything is refused. Unknown `command_tags` are refused.
 | `min_deleted_files` | int | diff summary: deleted files ≥ N |
 | `min_deleted_lines` | int | diff summary: deleted lines ≥ N |
 | `min_files_changed` | int | diff summary: changed files ≥ N |
+| `added_lines` | regexes | any line the change *adds* matches any expression |
 
 Semantics:
 
@@ -74,6 +76,13 @@ Semantics:
   `**/.env` also matches a top-level `.env`, `{a,b}` alternation works.
 - **Wildcards** (commands, runners, steps): `*` matches any run of
   characters including spaces and `/`; `?` one character.
+- **`added_lines`** uses Rust `regex` syntax (compiled into one set per
+  rule) and is only available for `write` subjects at the diff gate: the
+  added lines of each changed file (`git diff -U0 <base> -- <path>`, or the
+  whole content of an untracked file; at most 20 000 lines of 1 KiB). They
+  are read only when some rule in the effective set uses `added_lines`.
+  Removed lines never match, so re-enabling a test is never flagged. A
+  subject without content (e.g. `policy check --path`) does not match.
 
 ### Actions
 
@@ -157,9 +166,23 @@ tags: git, git_force_push, git_push, shell
 | Before pushes (git step, PR step, `run pr`) | `git_push` with the push argv (so command tags apply too) | deny → `blocked`; approval → ask unless covered |
 | Before PR creation | `github_pr` | deny → `blocked`; approval → ask unless covered |
 | `run pr` (human CLI handoff) | `git_push`, `github_pr` | deny refuses; require_approval is satisfied by the human invoking the command (audited as `approval_granted`) |
+| Claude `PreToolUse` hook (`guard.claude_hook`), before each tool call of a Claude agent | `Bash` → the command (as a shell script, *without* the `command` action, so `approve-shell-mode` does not apply; tag and text rules do); `Write`/`Edit`/`MultiEdit`/`NotebookEdit` → `write` of the path (worktree-relative when inside); `Read` → `read` of the path | deny → the call is blocked and the reason goes to the agent (`agent_tool_checked`); require_approval and allow → no decision: Claude's own permission mode and the diff gate handle it, so nothing is asked twice |
 
 Only non-`allow` decisions for individual files are recorded in the run (to
 avoid thousands of "allow" entries); every other evaluation is recorded.
+
+### Engine guards (not policy files)
+
+Two checks produce REQUIRE_APPROVAL decisions with a synthetic rule, shown
+in approvals and the audit like any other rule:
+
+| Rule id (source) | When |
+| --- | --- |
+| `task-scope` (`task`) | the task declared `--scope` globs (or an accepted epic task has `scope`) and a changed path matches none of them (a rename counts if its old path matched). Approved paths are remembered by content fingerprint. |
+| `guard-test-only-retry` (`builtin:guard`) | a failed `command`/`check` step sent feedback to an agent and the new attempt changed only files matching `guard.test_paths` (tests and test configuration). Denying fails the step. Off with `guard.test_only_retry: false`. |
+
+A run also asks once when its reported usage exceeds `limits.max_tokens` or
+`limits.max_cost_usd` (`budget_exceeded`); denying stops it as `blocked`.
 
 ## Default policy summary
 
@@ -177,6 +200,10 @@ avoid thousands of "allow" entries); every other evaluation is recorded.
 | `deny-kubectl-delete-namespace` | deny | tag `kubectl_delete_namespace` |
 | `deny-production-targets` | deny | tag `production_target` |
 | `deny-agent-permission-bypass` | deny | `agent_start` with `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `bypassPermissions` |
+| `approve-agent-instructions-and-orchestrator-config` | approval | write/delete of `.ai/herdr-orchestrator/**`, `.ai/skills/**`, `.claude/**`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENT.md`, `GEMINI.md`, `.codex/**`, `.gemini/**`, `.cursor/**`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, `.mcp.json` — agents must not rewrite the rules they run under |
+| `approve-test-deletion` | approval | delete of `tests/`, `test/`, `__tests__/`, `spec/`, `*_test.*`, `*_spec.*`, `*.test.*`, `*.spec.*`, `test_*.py` (editing tests is allowed) |
+| `approve-test-runner-config` | approval | write/delete of `pytest.ini`, `tox.ini`, `jest.config*`, `vitest.config*`, `karma.conf*`, `.mocharc*`, `phpunit.xml*`, `.nycrc*`, `.coveragerc`, `codecov.yml` |
+| `approve-disabled-tests` | approval | `added_lines` that skip, ignore or focus tests: `#[ignore]`, `it/test/describe/context.skip/only/todo(`, `xit(`, `xtest(`, `xdescribe(`, `fdescribe(`, `@pytest.mark.skip/skipif/xfail`, `pytest.skip(`, `@unittest.skip*`, `self.skipTest(`, `t.Skip(`, `@Disabled`, `@Ignore`, `markTestSkipped(` |
 | `approve-migrations` | approval | `migrations/`, `migrate/`, `*.sql`, `schema.prisma`, `alembic/` |
 | `approve-infra` | approval | `*.tf`, `*.tfvars`, `terraform/`, `k8s/`, `kubernetes/`, `helm/`, `charts/`, `Dockerfile*`, `docker-compose*.y(a)ml`, `compose*.yaml`, `ansible/`, `pulumi/`, `serverless.yml` |
 | `approve-ci-cd` | approval | `.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`, `azure-pipelines.yml`, `.buildkite/`, `CODEOWNERS` |

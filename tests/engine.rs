@@ -472,7 +472,15 @@ fn pane_runner_uses_herdr_panes() {
     assert_eq!(p.cwd, r.git.worktree_path.clone().unwrap());
     let a = p.agent.as_ref().unwrap();
     assert_eq!(a.kind, "claude");
-    assert_eq!(a.args, vec!["--permission-mode", "acceptEdits"]);
+    // Claude starts with the policy hook registered through --settings.
+    let wt = r.git.worktree_path.clone().unwrap();
+    let settings = wt.join(".herdr-orchestrator/claude-settings.json");
+    assert_eq!(a.args, vec!["--permission-mode".to_string(), "acceptEdits".into(), "--settings".into(), settings.display().to_string()]);
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let cmd = v["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap();
+    assert!(cmd.contains("hook claude-pretool --run") && cmd.contains(&r.run_id), "{cmd}");
+    // The settings file is never part of the change.
+    assert!(!r.diff_stat.as_ref().unwrap().files.iter().any(|f| f.path.contains("claude-settings")));
     assert!(a.prompts[0].contains("You are an implementation agent"), "skill included");
     assert!(r.herdr.workspace_id.is_some());
     assert!(mock.calls().iter().any(|c| c.starts_with("worktree.open")));
@@ -845,4 +853,207 @@ fn cancel_during_the_settle_check_is_a_cancel_not_a_completion() {
     herdr_orchestrator::engine::request_cancel(&h.ctx, &run.run_id, "user", None).unwrap();
     let r = &h.settle(&t.task_id)[0];
     assert_eq!(r.status, RunStatus::Cancelled, "{:?}", r.status_reason);
+}
+
+// ------------------------------------------------------------ guardrails
+
+#[test]
+fn agent_instruction_files_need_approval() {
+    let mut h = Harness::new();
+    let t = h.task("Tweak instructions", "quick-task", Some("fake-touch-agent-config"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let a = h.pending_approval(&r.run_id).unwrap();
+    assert!(a.reason.contains("CLAUDE.md"), "{}", a.reason);
+    assert!(a.context.policy.iter().any(|p| p.matched.iter().any(|m| m.rule_id == "approve-agent-instructions-and-orchestrator-config")));
+    h.decide(&r.run_id, false);
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Failed);
+}
+
+#[test]
+fn added_test_skip_needs_approval() {
+    let mut h = Harness::new();
+    let t = h.task("Speed up tests", "quick-task", Some("fake-skip-test"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let a = h.pending_approval(&r.run_id).unwrap();
+    assert!(a.context.policy.iter().any(|p| p.matched.iter().any(|m| m.rule_id == "approve-disabled-tests")), "{:?}", a.context.policy);
+    h.decide(&r.run_id, true);
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+}
+
+#[test]
+fn retry_that_only_touches_tests_is_stopped() {
+    let mut h = Harness::new();
+    h.workflow("retry", RETRY_WF);
+    let t = h.task("Make tests pass", "retry", Some("fake-tests-only-on-retry"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let a = h.pending_approval(&r.run_id).unwrap();
+    assert!(a.reason.contains("changed only tests"), "{}", a.reason);
+    assert!(a.reason.contains("tests/fake_test.rs"));
+    assert!(h.events(&r.run_id).contains(&"test_only_retry".into()));
+    h.decide(&r.run_id, false);
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Failed);
+}
+
+#[test]
+fn test_only_retry_guard_can_be_disabled() {
+    let mut h = Harness::new();
+    h.project_file("config.yaml", "guard:\n  test_only_retry: false\n");
+    h.workflow("retry", RETRY_WF);
+    let t = h.task("Make tests pass", "retry", Some("fake-tests-only-on-retry"));
+    let r = &h.settle(&t.task_id)[0];
+    // Never fixed, but never asked either: retries run out.
+    assert_eq!(r.status, RunStatus::Failed);
+    assert!(!h.events(&r.run_id).contains(&"test_only_retry".into()));
+}
+
+#[test]
+fn changes_outside_the_task_scope_need_approval() {
+    let mut h = Harness::new();
+    let t = h.task_with("Scoped", TaskOptions { workflow: Some("quick-task".into()), runner: Some("fake-success".into()), scope: vec!["src/**".into()], ..Default::default() });
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let a = h.pending_approval(&r.run_id).unwrap();
+    assert!(a.reason.contains("fake/implement.txt"), "{}", a.reason);
+    assert!(a.context.policy.iter().any(|p| p.matched.iter().any(|m| m.rule_id == "task-scope")));
+    h.decide(&r.run_id, true);
+    assert_eq!(h.settle(&t.task_id)[0].status, RunStatus::Succeeded);
+    // Inside the scope nothing is asked.
+    let t2 = h.task_with("Scoped ok", TaskOptions { workflow: Some("quick-task".into()), runner: Some("fake-success".into()), scope: vec!["fake/**".into()], ..Default::default() });
+    assert_eq!(h.settle(&t2.task_id)[0].status, RunStatus::Succeeded);
+}
+
+#[test]
+fn token_budget_asks_before_going_on() {
+    let mut h = Harness::new();
+    // Fake agents report 1200 tokens per step.
+    h.project_file("config.yaml", "limits:\n  max_tokens: 1000\n");
+    let t = h.task("Expensive", "quick-task", Some("fake-success"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let a = h.pending_approval(&r.run_id).unwrap();
+    assert!(a.reason.contains("Budget exceeded"), "{}", a.reason);
+    assert!(h.events(&r.run_id).contains(&"budget_exceeded".into()));
+    h.decide(&r.run_id, false);
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Blocked, "{:?}", r.status_reason);
+    assert_eq!(herdr_orchestrator::telemetry::compact_tokens(&herdr_orchestrator::telemetry::run_agent_usage(r)), "1.2k");
+}
+
+#[test]
+fn claude_hook_can_be_switched_off() {
+    let mock = Arc::new(MockHerdr::new(pane_behavior("success")));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.project_file("config.yaml", "herdr:\n  close_panes_on_success: false\nguard:\n  claude_hook: false\n");
+    let t = h.task("Pane work", "quick-task", Some("claude"));
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    let a = mock.panes().into_iter().find_map(|p| p.agent).unwrap();
+    assert_eq!(a.args, vec!["--permission-mode", "acceptEdits"]);
+}
+
+// ------------------------------------------------- after the handoff
+
+fn pr_harness() -> (Harness, std::path::PathBuf) {
+    let mut h = Harness::new();
+    let remote = h.dir.path().join("remote.git");
+    assert!(std::process::Command::new("git").args(["init", "-q", "--bare"]).arg(&remote).status().unwrap().success());
+    assert!(std::process::Command::new("git").args(["remote", "add", "origin"]).arg(&remote).current_dir(&h.repo).status().unwrap().success());
+    let gh = fake_gh(h.dir.path());
+    h.rebuild(|c| c.gh = herdr_orchestrator::github::Gh { bin: gh.clone() });
+    h.workflow("pr", "  - id: implement\n    type: agent\n    prompt: \"{{task}}\"\n  - id: approval\n    type: approval\n    reason: ok?\n  - id: pr\n    type: github_pr\n");
+    (h, remote)
+}
+
+#[test]
+fn pr_feedback_becomes_a_follow_up_on_the_same_branch() {
+    let (mut h, remote) = pr_harness();
+    let t = h.task("Open a PR", "pr", Some("fake-success"));
+    h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let r0 = h.runs_of(&t.task_id)[0].clone();
+    h.decide(&r0.run_id, true);
+    let r = h.settle(&t.task_id)[0].clone();
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    // No feedback yet: nothing to follow up, and the watcher stays quiet.
+    let err = herdr_orchestrator::engine::followup::pr_followup(&h.ctx, &r.run_id, None, None, "test").unwrap_err();
+    assert!(format!("{err:#}").contains("no failing checks"), "{err:#}");
+    std::fs::write(
+        h.dir.path().join("gh-view.json"),
+        r#"{"state":"OPEN","statusCheckRollup":[{"name":"test","conclusion":"FAILURE","detailsUrl":"https://ci/1"}],"reviews":[{"author":{"login":"bo"},"state":"CHANGES_REQUESTED","body":"handle errors"}],"comments":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(h.dir.path().join("gh-inline.json"), r#"[{"path":"src/lib.rs","line":1,"user":{"login":"ana"},"body":"please rename a"}]"#).unwrap();
+    let seen = herdr_orchestrator::engine::followup::watch_prs(&h.ctx, 14).unwrap();
+    assert_eq!(seen, vec![r.run_id.clone()]);
+    assert!(herdr_orchestrator::engine::followup::watch_prs(&h.ctx, 14).unwrap().is_empty(), "reported once");
+    assert!(h.events(&r.run_id).contains(&"pr_feedback_detected".into()));
+
+    let ft = herdr_orchestrator::engine::followup::pr_followup(&h.ctx, &r.run_id, Some("keep the API".into()), Some("fake-skip-test".into()), "test").unwrap();
+    // Only one follow-up at a time.
+    assert!(herdr_orchestrator::engine::followup::pr_followup(&h.ctx, &r.run_id, None, None, "test").is_err());
+    assert!(ft.description.contains("handle errors") && ft.description.contains("please rename a") && ft.description.contains("CI check `test` failure"));
+    assert!(ft.description.contains("keep the API"));
+    assert_eq!(ft.options.continue_run.as_deref(), Some(r.run_id.as_str()));
+    // Pushing new commits to the existing PR needs approval.
+    let fr = h.wait_status(&ft.task_id, RunStatus::AwaitingApproval);
+    assert_eq!(fr.git.branch, r.git.branch, "same branch");
+    assert_eq!(fr.git.worktree_path, r.git.worktree_path, "same worktree");
+    assert!(h.pending_approval(&fr.run_id).is_some());
+    // The explicit approval step covers the PR step; the push that adds
+    // commits to the existing PR asks separately.
+    let ok = h.until(Duration::from_secs(30), |h| {
+        if let Some(p) = h.pending_approval(&fr.run_id) {
+            herdr_orchestrator::approvals::decide(&h.ctx.store, &p.approval_id, true, Some("t".into()), None).unwrap();
+        }
+        h.ctx.store.load_run(&fr.run_id).unwrap().status.is_terminal()
+    });
+    assert!(ok);
+    let fr = h.ctx.store.load_run(&fr.run_id).unwrap();
+    assert_eq!(fr.status, RunStatus::Succeeded, "{:?}", fr.status_reason);
+    assert_eq!(fr.pr_url, r.pr_url, "same PR");
+    let remote_head = std::process::Command::new("git").args(["rev-parse", r.git.branch.as_deref().unwrap()]).current_dir(&remote).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&remote_head.stdout).trim(), fr.git.head_sha.clone().unwrap(), "follow-up commits pushed");
+    assert!(fr.git.commits.len() == 1 && fr.git.head_sha != r.git.head_sha);
+    // Without --runner a follow-up keeps the original agents (never the
+    // default runner).
+    h.ctx.store.update_task(&ft.task_id, |t| {
+        t.status = TaskStatus::Succeeded;
+        Ok(())
+    })
+    .unwrap();
+    let again = herdr_orchestrator::engine::followup::pr_followup(&h.ctx, &r.run_id, None, None, "test").unwrap();
+    assert_eq!(again.options.runner.as_deref(), Some("fake-success"));
+}
+
+#[test]
+fn gc_removes_only_clean_merged_worktrees_and_stats_summarize() {
+    let mut h = Harness::new();
+    let t1 = h.task("Merged later", "quick-task", Some("fake-success"));
+    let t2 = h.task("Not merged", "quick-task", Some("fake-success"));
+    let t3 = h.task("Failed", "quick-task", Some("fake-fail"));
+    let r1 = h.settle(&t1.task_id)[0].clone();
+    let r2 = h.settle(&t2.task_id)[0].clone();
+    h.settle(&t3.task_id);
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&h.repo).status().unwrap().success());
+    git(&["-c", "user.email=t@e", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "m", r1.git.branch.as_deref().unwrap()]);
+    use herdr_orchestrator::engine::maintenance::*;
+    let c = gc_candidates(&h.ctx, &GcOptions::default()).unwrap();
+    assert_eq!(c.iter().map(|x| x.run_id.clone()).collect::<Vec<_>>(), vec![r1.run_id.clone()]);
+    assert!(c[0].reason.contains("merged into main"));
+    // With --failed, old failures count too (0 days = any age).
+    let c2 = gc_candidates(&h.ctx, &GcOptions { include_failed: true, older_than_days: -1, ..Default::default() }).unwrap();
+    assert_eq!(c2.len(), 2);
+    // A dirty worktree is never a candidate.
+    std::fs::write(r2.git.worktree_path.clone().unwrap().join("wip.txt"), "x").unwrap();
+    for (_, res) in gc_remove(&h.ctx, &c, None) {
+        res.unwrap();
+    }
+    assert!(!r1.git.worktree_path.clone().unwrap().exists());
+    assert!(r2.git.worktree_path.clone().unwrap().exists());
+    let out = std::process::Command::new("git").args(["branch", "--list", r1.git.branch.as_deref().unwrap()]).current_dir(&h.repo).output().unwrap();
+    assert!(!String::from_utf8_lossy(&out.stdout).trim().is_empty(), "branches are kept");
+    let stats = runner_stats(&h.ctx.store.list_runs().unwrap());
+    let s = stats.iter().find(|s| s.runner == "fake-success").unwrap();
+    assert_eq!((s.runs, s.succeeded, s.avg_tokens), (2, 2, Some(1200)));
+    assert_eq!(stats.iter().find(|s| s.runner == "fake-fail").unwrap().failed, 1);
 }

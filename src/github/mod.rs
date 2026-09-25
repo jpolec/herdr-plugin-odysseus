@@ -118,6 +118,104 @@ impl Gh {
     }
 }
 
+/// Review comments and CI results of a PR, as feedback for an agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PrFeedback {
+    pub url: String,
+    pub state: String,
+    pub failing_checks: Vec<String>,
+    pub pending_checks: usize,
+    pub comments: usize,
+    /// Markdown-ish text for the agent (untrusted; prompt-only).
+    pub text: String,
+}
+
+impl PrFeedback {
+    pub fn actionable(&self) -> bool {
+        !self.failing_checks.is_empty() || self.comments > 0
+    }
+    /// Fingerprint to notice *new* feedback.
+    pub fn fingerprint(&self) -> String {
+        crate::store::sha256_hex(self.text.as_bytes())[..16].to_string()
+    }
+}
+
+/// `https://github.com/<owner>/<repo>/pull/<n>` → (owner/repo, n).
+pub fn parse_pr_url(url: &str) -> Option<(String, u64)> {
+    let rest = url.trim().trim_end_matches('/').split("://").nth(1)?;
+    let parts: Vec<&str> = rest.split('/').collect();
+    if parts.len() < 5 || parts[3] != "pull" {
+        return None;
+    }
+    let valid = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    if !valid(parts[1]) || !valid(parts[2]) {
+        return None;
+    }
+    Some((format!("{}/{}", parts[1], parts[2]), parts[4].parse().ok()?))
+}
+
+fn failed(conclusion: &str) -> bool {
+    matches!(conclusion.to_ascii_uppercase().as_str(), "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE")
+}
+
+/// Build feedback from `gh pr view --json …` output and the PR's inline
+/// review comments (`gh api …/pulls/<n>/comments`).
+pub fn feedback_from_json(url: &str, view: &serde_json::Value, inline: &serde_json::Value) -> PrFeedback {
+    let mut f = PrFeedback { url: url.to_string(), state: view["state"].as_str().unwrap_or("").to_string(), ..Default::default() };
+    let mut text = String::new();
+    for c in view["statusCheckRollup"].as_array().into_iter().flatten() {
+        let name = c["name"].as_str().or(c["context"].as_str()).unwrap_or("check");
+        let concl = c["conclusion"].as_str().filter(|s| !s.is_empty()).or(c["state"].as_str()).unwrap_or("");
+        if failed(concl) {
+            let link = c["detailsUrl"].as_str().or(c["targetUrl"].as_str()).unwrap_or("");
+            f.failing_checks.push(name.to_string());
+            text.push_str(&format!("- CI check `{name}` {}: {link}\n", concl.to_ascii_lowercase()));
+        } else if concl.is_empty() || matches!(concl.to_ascii_uppercase().as_str(), "PENDING" | "IN_PROGRESS" | "QUEUED" | "EXPECTED") {
+            f.pending_checks += 1;
+        }
+    }
+    let author = |v: &serde_json::Value| v["author"]["login"].as_str().or(v["user"]["login"].as_str()).unwrap_or("someone").to_string();
+    for r in view["reviews"].as_array().into_iter().flatten() {
+        let body = r["body"].as_str().unwrap_or("").trim();
+        let state = r["state"].as_str().unwrap_or("");
+        if !body.is_empty() || state == "CHANGES_REQUESTED" {
+            f.comments += 1;
+            text.push_str(&format!("- Review by {} ({}): {}\n", author(r), state.to_ascii_lowercase().replace('_', " "), body));
+        }
+    }
+    for c in view["comments"].as_array().into_iter().flatten() {
+        let body = c["body"].as_str().unwrap_or("").trim();
+        if !body.is_empty() {
+            f.comments += 1;
+            text.push_str(&format!("- Comment by {}: {}\n", author(c), body));
+        }
+    }
+    for c in inline.as_array().into_iter().flatten() {
+        let body = c["body"].as_str().unwrap_or("").trim();
+        if !body.is_empty() {
+            f.comments += 1;
+            let line = c["line"].as_u64().or(c["original_line"].as_u64()).map(|l| format!(":{l}")).unwrap_or_default();
+            text.push_str(&format!("- {}{} — {}: {}\n", c["path"].as_str().unwrap_or("?"), line, author(c), body));
+        }
+    }
+    f.text = text;
+    f
+}
+
+impl Gh {
+    pub fn pr_feedback(&self, repo_dir: &Path, url: &str) -> Result<PrFeedback> {
+        let (slug, n) = parse_pr_url(url).with_context(|| format!("not a GitHub pull request URL: {url}"))?;
+        let view = self.call(repo_dir, &["pr", "view", url, "--json", "number,url,state,reviews,comments,statusCheckRollup"], Duration::from_secs(60))?;
+        let view: serde_json::Value = serde_json::from_str(view.trim()).context("parsing gh pr view output")?;
+        let inline = self
+            .call(repo_dir, &["api", &format!("repos/{slug}/pulls/{n}/comments"), "--paginate"], Duration::from_secs(60))
+            .ok()
+            .and_then(|s| serde_json::from_str(s.trim()).ok())
+            .unwrap_or(serde_json::Value::Null);
+        Ok(feedback_from_json(url, &view, &inline))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +237,32 @@ mod tests {
         assert!(gh.pr_for_branch(d.path(), "b").unwrap().is_none());
         assert_eq!(gh.pr_create(d.path(), "main", "b", "t", "body", true).unwrap(), "https://github.com/o/r/pull/9");
         assert!(gh.pr_create(d.path(), "--x", "b", "t", "body", true).is_err());
+    }
+
+    #[test]
+    fn pr_feedback_parsing() {
+        assert_eq!(parse_pr_url("https://github.com/o/r/pull/7"), Some(("o/r".into(), 7)));
+        assert_eq!(parse_pr_url("https://github.com/o/r/issues/7"), None);
+        assert_eq!(parse_pr_url("https://github.com/o;x/r/pull/7"), None);
+        let view = serde_json::json!({
+            "state": "OPEN",
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "test", "conclusion": "FAILURE", "detailsUrl": "https://ci/1"},
+                {"__typename": "CheckRun", "name": "lint", "conclusion": "SUCCESS"},
+                {"__typename": "StatusContext", "context": "deploy", "state": "PENDING"}
+            ],
+            "reviews": [{"author": {"login": "ana"}, "state": "CHANGES_REQUESTED", "body": "Handle the 0 case."}, {"author": {"login": "bo"}, "state": "APPROVED", "body": ""}],
+            "comments": [{"author": {"login": "cy"}, "body": "Also update the docs"}]
+        });
+        let inline = serde_json::json!([{"path": "src/a.rs", "line": 12, "user": {"login": "ana"}, "body": "off by one"}]);
+        let f = feedback_from_json("https://github.com/o/r/pull/7", &view, &inline);
+        assert_eq!(f.failing_checks, vec!["test"]);
+        assert_eq!(f.pending_checks, 1);
+        assert_eq!(f.comments, 3);
+        assert!(f.actionable());
+        assert!(f.text.contains("src/a.rs:12 — ana: off by one"));
+        assert!(f.text.contains("changes requested"));
+        let quiet = feedback_from_json("u", &serde_json::json!({"state": "OPEN"}), &serde_json::Value::Null);
+        assert!(!quiet.actionable());
     }
 }

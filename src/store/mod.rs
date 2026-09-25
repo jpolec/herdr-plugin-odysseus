@@ -42,6 +42,12 @@ impl StateLayout {
     pub fn control_dir(&self) -> PathBuf {
         self.root.join("state/control")
     }
+    pub fn epics_dir(&self) -> PathBuf {
+        self.root.join("state/epics")
+    }
+    pub fn epic_counter_file(&self) -> PathBuf {
+        self.root.join("state/epic_counter")
+    }
     pub fn scheduler_file(&self) -> PathBuf {
         self.root.join("state/scheduler.json")
     }
@@ -103,6 +109,7 @@ impl StateLayout {
             self.runs_dir(),
             self.approvals_dir(),
             self.control_dir(),
+            self.epics_dir(),
             self.audit_dir(),
             self.logs_dir(),
             self.locks_dir(),
@@ -452,6 +459,51 @@ impl Store {
         Ok(a)
     }
 
+    // ---- epics -------------------------------------------------------
+
+    /// Next epic id: `E1`, `E2`, … (never reused).
+    pub fn next_epic_id(&self) -> Result<String> {
+        let _g = self.lock("epic-counter")?;
+        let p = self.layout.epic_counter_file();
+        let cur: u64 = std::fs::read_to_string(&p).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+        let max_existing = self.list_ids(&self.layout.epics_dir())?.iter().filter_map(|s| s.trim_start_matches('E').parse::<u64>().ok()).max().unwrap_or(0);
+        let next = cur.max(max_existing) + 1;
+        atomic_write(&p, next.to_string().as_bytes())?;
+        Ok(format!("E{next}"))
+    }
+    pub fn save_epic(&self, e: &crate::epic::Epic) -> Result<()> {
+        write_doc(&self.path(self.layout.epics_dir(), &e.epic_id)?, "epic", e)
+    }
+    pub fn load_epic(&self, id: &str) -> Result<crate::epic::Epic> {
+        let id = id.trim_start_matches('#');
+        let id = if id.chars().all(|c| c.is_ascii_digit()) { format!("E{id}") } else { id.to_string() };
+        let p = self.path(self.layout.epics_dir(), &id)?;
+        if !p.exists() {
+            return Err(StoreError::NotFound(format!("epic {id}")).into());
+        }
+        read_doc(&self.layout, &p, "epic")
+    }
+    pub fn list_epics(&self) -> Result<Vec<crate::epic::Epic>> {
+        let mut out = vec![];
+        for id in self.list_ids(&self.layout.epics_dir())? {
+            match self.load_epic(&id) {
+                Ok(e) => out.push(e),
+                Err(e) => tracing::warn!("skipping epic {id}: {e:#}"),
+            }
+        }
+        out.sort_by_key(|e| e.epic_id.trim_start_matches('E').parse::<u64>().unwrap_or(u64::MAX));
+        Ok(out)
+    }
+    pub fn update_epic<F: FnOnce(&mut crate::epic::Epic) -> Result<()>>(&self, id: &str, f: F) -> Result<crate::epic::Epic> {
+        let mut e = self.load_epic(id)?;
+        let _g = self.lock(&format!("epic-{}", e.epic_id))?;
+        e = self.load_epic(&e.epic_id)?;
+        f(&mut e)?;
+        e.updated_at = crate::model::now();
+        self.save_epic(&e)?;
+        Ok(e)
+    }
+
     // ---- control & scheduler ----------------------------------------
 
     pub fn load_control(&self, run_id: &str) -> Result<RunControl> {
@@ -505,6 +557,7 @@ impl Store {
             self.layout.runs_dir(),
             self.layout.approvals_dir(),
             self.layout.control_dir(),
+            self.layout.epics_dir(),
         ] {
             if let Ok(rd) = std::fs::read_dir(&d) {
                 for e in rd.flatten() {

@@ -71,6 +71,37 @@ pub struct ApprovalContext {
     pub policy: Vec<PolicyDecision>,
     /// The exact action that will happen on approval.
     pub pending_action: Option<String>,
+    /// Acceptance criteria with the latest review's judgement.
+    #[serde(default)]
+    pub acceptance: Vec<AcceptanceRow>,
+    /// Checks only a human can do (from an accepted epic plan).
+    #[serde(default)]
+    pub manual_checks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AcceptanceRow {
+    pub criterion: String,
+    /// `met`, `not_met`, `unverifiable`, or `not reviewed`.
+    pub status: String,
+    #[serde(default)]
+    pub evidence: String,
+}
+
+/// Criteria of a task joined with the latest acceptance judgement.
+pub fn acceptance_rows(criteria: &[String], judged: Option<&serde_json::Value>) -> Vec<AcceptanceRow> {
+    criteria
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let j = judged.and_then(|v| v["criteria"].as_array()).and_then(|a| a.iter().find(|x| x["index"].as_u64() == Some(i as u64 + 1)));
+            AcceptanceRow {
+                criterion: c.clone(),
+                status: j.and_then(|x| x["status"].as_str()).unwrap_or("not reviewed").to_string(),
+                evidence: j.and_then(|x| x["evidence"].as_str()).unwrap_or("").to_string(),
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

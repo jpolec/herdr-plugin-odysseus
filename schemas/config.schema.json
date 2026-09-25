@@ -220,6 +220,24 @@
         },
         "push_before_pr": {
           "type": "boolean"
+        },
+        "watch_prs": {
+          "type": "boolean",
+          "default": false,
+          "description": "While the engine runs, check open PRs of recent runs for failing CI and review comments and notify (never starts anything). Keeps the daemon up."
+        },
+        "watch_interval": {
+          "description": "Duration: `45m`, `1h30m` or seconds.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "default": "10m"
         }
       }
     },
@@ -377,6 +395,85 @@
         "type": "array",
         "items": {
           "type": "string"
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_logs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Read token usage of pane agents from their local session logs (~/.claude/projects, ~/.codex/sessions). Read-only, local."
+        }
+      }
+    },
+    "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claude_hook": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start Claude agents with a PreToolUse hook that blocks tool calls the policy denies, before they run."
+        },
+        "test_only_retry": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a failed check was fed back to an agent, ask a human if the new attempt changed only tests or test configuration."
+        },
+        "test_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Globs that count as tests or test/check configuration."
+        }
+      }
+    },
+    "epic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adr_dirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "docs/adr",
+            "doc/adr",
+            "docs/decisions",
+            "docs/architecture/decisions",
+            "adr",
+            ".ai/adr"
+          ]
+        },
+        "max_tasks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 12
+        },
+        "planner_runner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Runner for planning and conformance agents (default: defaults.runner)."
+        },
+        "task_workflow": {
+          "type": "string",
+          "default": "epic-task"
+        },
+        "dependency_mode": {
+          "enum": [
+            "merged",
+            "stacked"
+          ],
+          "default": "merged",
+          "description": "merged: a dependency counts when its commits are in the base branch (local check). stacked: branch from the one unmerged dependency."
         }
       }
     }

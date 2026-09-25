@@ -61,6 +61,17 @@ pub const FAKE_SCENARIOS: &[&str] = &[
     "touch-migration",
     "crash",
     "noop",
+    "skip-test",
+    "tests-only-on-retry",
+    "touch-agent-config",
+    "plan",
+    "plan-invalid",
+    "plan-fix",
+    "plan-writes",
+    "acceptance-met",
+    "acceptance-unmet",
+    "acceptance-fix",
+    "conformance",
 ];
 
 fn builtin(name: &str) -> Option<RunnerProfile> {

@@ -1,0 +1,62 @@
+# epic-task: one task of an accepted ADR plan.
+#
+#   implement → tests (retry ×2) → [plan checks] → acceptance review (gated,
+#   unmet criteria go back to the implementer) → approval → draft PR
+#
+# Verification commands from the accepted plan are inserted as check steps
+# before the acceptance review.
+version: 1
+name: epic-task
+description: Implement one accepted plan task, verify each acceptance criterion, approval, draft PR.
+defaults:
+  timeout: 45m
+
+steps:
+  - id: implement
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      Acceptance criteria (a reviewer will check each one against the code and tests):
+      {{acceptance}}
+
+      {{feedback}}
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: acceptance
+    type: agent
+    runner: claude
+    skill: acceptance-review
+    output: acceptance
+    gate: true
+    prompt: |
+      Verify the change on this branch against each acceptance criterion below.
+      Inspect it with `git diff {{base_sha}}`, read the touched files and run
+      the relevant tests.
+
+      Task:
+      {{task}}
+
+      Acceptance criteria:
+      {{acceptance}}
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: approval
+    type: approval
+    reason: Acceptance criteria verified. Approve to open a draft PR.
+
+  - id: pr
+    type: github_pr
+    draft: true

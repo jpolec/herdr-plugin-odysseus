@@ -1,0 +1,25 @@
+# epic-plan: read an ADR and propose a task plan. Used by `epic create`.
+#
+#   planner (read-only, validated plan; invalid plans go back with the errors)
+#
+# The step fails if the agent changes any file. Nothing is committed.
+version: 1
+name: epic-plan
+description: Read an ADR and propose a validated task plan (read-only; used by `epic create`).
+defaults:
+  timeout: 30m
+
+steps:
+  - id: plan
+    type: agent
+    skill: adr-planning
+    output: plan
+    commit: false
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+    on_failure:
+      retry_step: plan
+      max_attempts: 2
+      feedback: true

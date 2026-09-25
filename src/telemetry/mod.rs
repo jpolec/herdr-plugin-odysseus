@@ -5,6 +5,8 @@
 //! unknown`) all the way to the UI, so "$1.84 reported" and "~$1.84
 //! estimated" are never confused.
 
+pub mod sessions;
+
 use serde::Serialize;
 
 use crate::model::{Run, UsageRecord, UsageSource};
@@ -56,6 +58,36 @@ pub fn tokens_display(u: &UsageRecord) -> String {
     }
 }
 
+/// Short token figure for tables: `18.2k`, `~18.2k` (estimated or a sum
+/// that includes unknown steps), `–` (unknown).
+pub fn compact_tokens(u: &UsageRecord) -> String {
+    let (Some(i), o) = (u.input_tokens, u.output_tokens) else { return "–".into() };
+    let n = i + o.unwrap_or(0);
+    let v = if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 10_000 {
+        format!("{}k", n / 1000)
+    } else if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    };
+    match u.source {
+        UsageSource::Reported | UsageSource::Measured => v,
+        _ => format!("~{v}"),
+    }
+}
+
+/// Agent usage of one run (commands excluded).
+pub fn run_agent_usage(r: &Run) -> UsageRecord {
+    UsageRecord::sum(r.steps.iter().filter(|e| e.kind == crate::model::StepKind::Agent).filter_map(|e| e.usage.as_ref()))
+}
+
+/// Agent usage of a set of runs, e.g. all runs of a task or an epic.
+pub fn runs_agent_usage<'a>(runs: impl Iterator<Item = &'a Run>) -> UsageRecord {
+    summarize(runs).total
+}
+
 /// Advisory limit check. Returns a warning only when the provider reported
 /// numbers; unknown usage is never treated as "under budget".
 pub fn budget_warning(total: &UsageRecord, max_cost: Option<f64>, max_tokens: Option<u64>) -> Option<String> {
@@ -84,5 +116,20 @@ mod tests {
         assert!(budget_warning(&UsageRecord::unknown(None), Some(0.01), Some(1)).is_none());
         assert_eq!(tokens_display(&UsageRecord::unknown(None)), "tokens unknown");
         assert_eq!(tokens_display(&u), "10 in / 5 out (reported)");
+    }
+
+    #[test]
+    fn compact() {
+        let mut u = UsageRecord { source: UsageSource::Reported, input_tokens: Some(15_000), output_tokens: Some(3_200), ..Default::default() };
+        assert_eq!(compact_tokens(&u), "18k");
+        u.input_tokens = Some(1_200);
+        u.output_tokens = Some(100);
+        assert_eq!(compact_tokens(&u), "1.3k");
+        u.source = UsageSource::Estimated;
+        assert_eq!(compact_tokens(&u), "~1.3k");
+        assert_eq!(compact_tokens(&UsageRecord::unknown(None)), "–");
+        u.input_tokens = Some(2_500_000);
+        u.source = UsageSource::Reported;
+        assert_eq!(compact_tokens(&u), "2.5M");
     }
 }

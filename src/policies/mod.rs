@@ -6,6 +6,7 @@
 //! policy's `default_decision` applies. Every matching rule is recorded so
 //! the audit trail explains *why*.
 
+pub mod agent_hook;
 pub mod command;
 
 use std::path::{Path, PathBuf};
@@ -114,6 +115,10 @@ pub struct RuleMatch {
     pub min_deleted_lines: Option<u64>,
     #[serde(default)]
     pub min_files_changed: Option<usize>,
+    /// Regular expressions matched against the lines a change *adds*
+    /// (write subjects from the diff gate only), e.g. `#\\[ignore`.
+    #[serde(default)]
+    pub added_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -164,6 +169,7 @@ struct CompiledRule {
     exclude_paths: Option<GlobSet>,
     branches: Option<GlobSet>,
     repos: Option<GlobSet>,
+    added_lines: Option<regex::RegexSet>,
 }
 
 /// The union of all loaded policy files.
@@ -239,6 +245,9 @@ pub struct Subject {
     pub deleted_files: Option<usize>,
     pub deleted_lines: Option<u64>,
     pub files_changed: Option<usize>,
+    /// Lines the change adds (diff gate, only when a rule needs them).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_lines: Option<Vec<String>>,
 }
 
 impl Subject {
@@ -324,6 +333,7 @@ impl PolicySet {
                 && m.min_deleted_files.is_none()
                 && m.min_deleted_lines.is_none()
                 && m.min_files_changed.is_none()
+                && m.added_lines.is_empty()
             {
                 bail!("{source}: rule {:?} matches everything; add at least one criterion", rule.id);
             }
@@ -332,6 +342,11 @@ impl PolicySet {
                 exclude_paths: globset(&m.exclude_paths)?,
                 branches: globset(&m.branches)?,
                 repos: globset(&m.repos)?,
+                added_lines: if m.added_lines.is_empty() {
+                    None
+                } else {
+                    Some(regex::RegexSet::new(&m.added_lines).with_context(|| format!("{source}: rule {}: invalid added_lines regex", rule.id))?)
+                },
                 actions,
                 source: source.to_string(),
                 rule,
@@ -346,6 +361,12 @@ impl PolicySet {
             .with_context(|| format!("reading policy {}", path.display()))?;
         let f = PolicyFile::parse(&text).with_context(|| format!("in {}", path.display()))?;
         self.add(f, &path.display().to_string())
+    }
+
+    /// Whether any rule inspects added lines (so the diff gate only reads
+    /// file contents when a policy asks for it).
+    pub fn needs_added_lines(&self) -> bool {
+        self.rules.iter().any(|r| r.added_lines.is_some())
     }
 
     pub fn rule_count(&self) -> usize {
@@ -473,6 +494,12 @@ fn rule_matches(r: &CompiledRule, s: &Subject) -> bool {
             return false;
         }
     }
+    if let Some(set) = &r.added_lines {
+        match &s.added_lines {
+            Some(lines) if lines.iter().any(|l| set.is_match(l)) => {}
+            _ => return false,
+        }
+    }
     true
 }
 
@@ -560,6 +587,38 @@ mod tests {
         }
         let d = s.evaluate(&Subject::file(Action::Write, "src/lib.rs"));
         assert!(d.allowed());
+    }
+
+    #[test]
+    fn agent_rules_and_tests_are_guarded() {
+        let s = default_set();
+        for p in [".ai/herdr-orchestrator/policy.yaml", ".ai/skills/x.md", "CLAUDE.md", "sub/AGENTS.md", ".claude/settings.json", ".codex/config.toml", ".cursor/rules/a.mdc", ".mcp.json", "jest.config.ts", "pytest.ini"] {
+            let d = s.evaluate(&Subject::file(Action::Write, p));
+            assert_eq!(d.decision, Decision::RequireApproval, "{p}: {}", d.reason);
+        }
+        for p in ["tests/api.rs", "src/foo_test.go", "web/a.spec.ts", "test_x.py"] {
+            assert_eq!(s.evaluate(&Subject::file(Action::Delete, p)).decision, Decision::RequireApproval, "{p}");
+            assert!(s.evaluate(&Subject::file(Action::Write, p)).allowed(), "editing tests is fine: {p}");
+        }
+        assert!(s.needs_added_lines());
+        let with = |lines: &[&str]| {
+            let mut x = Subject::file(Action::Write, "src/lib.rs");
+            x.added_lines = Some(v(lines));
+            s.evaluate(&x).decision
+        };
+        for l in ["    #[ignore]", "  it.skip('x', () => {})", "describe.only(\"a\", f)", "@pytest.mark.skip(reason='x')", "    t.Skip(\"flaky\")", "  @Disabled", "xit('a', f)", "self.skipTest('x')"] {
+            assert_eq!(with(&[l]), Decision::RequireApproval, "{l}");
+        }
+        for l in ["model.fit(x, y)", "let skip = 3;", "fn ignore_case() {}", "it('works', f)", "// we no longer #[ignore] this"] {
+            // The last one is a comment but still adds the marker text; only
+            // the others must stay allowed.
+            if l.starts_with("//") {
+                continue;
+            }
+            assert_eq!(with(&[l]), Decision::Allow, "{l}");
+        }
+        // Without content the rule cannot match (e.g. `policy check --path`).
+        assert!(s.evaluate(&Subject::file(Action::Write, "src/lib.rs")).allowed());
     }
 
     #[test]

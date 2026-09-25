@@ -56,6 +56,11 @@ command (e.g. `copilot`) fail with a clear error.
 | `shell` | shell | — | must be configured | none | — |
 | `fake-<scenario>` | fake | — | — | fixed | — |
 
+Claude (pane and headless) additionally gets
+`--settings <worktree>/.herdr-orchestrator/claude-settings.json`, which
+registers the orchestrator's `PreToolUse` policy hook
+(`guard.claude_hook`, default on; see SECURITY_MODEL.md).
+
 The permission modes are deliberately conservative: Claude may edit files
 but asks before running shell commands; Codex writes inside its workspace
 sandbox and asks before leaving it. Those questions show up as Herdr
@@ -79,6 +84,16 @@ refuses to launch agents with all prompts disabled
 | `review-invalid` | writes non-JSON output |
 | `touch-secret` | writes `.env` (policy deny) |
 | `touch-migration` | writes `db/migrations/001_init.sql` (policy approval) |
+| `skip-test` | adds `#[ignore]` to a test in `src/lib.rs` (`approve-disabled-tests`) |
+| `tests-only-on-retry` | attempt 1 changes code, later attempts only `tests/fake_test.rs` (`guard-test-only-retry`) |
+| `touch-agent-config` | writes `CLAUDE.md` (agent instructions rule) |
+| `plan` | writes a valid three-task plan (T2 depends on T1) |
+| `plan-invalid` | writes a cyclic plan on every attempt |
+| `plan-fix` | cyclic plan on attempt 1, valid afterwards |
+| `plan-writes` | valid plan, but also writes `PLAN.md` (read-only violation) |
+| `acceptance-met`, `acceptance-unmet` | judges criterion 1 `met` / `not_met` |
+| `acceptance-fix` | `not_met` on attempt 1, `met` afterwards |
+| `conformance` | one covered and one missing point, one follow-up |
 
 `cargo test` and CI use these, so no provider account is needed.
 
@@ -174,13 +189,26 @@ folder in Claude beforehand avoids the prompt.
 | --- | --- | --- |
 | `claude-json` | final JSON object | input = `input_tokens` + `cache_creation_input_tokens`; output = `output_tokens`; cached = `cache_read_input_tokens`; cost = `total_cost_usd`; source `reported` |
 | `codex-jsonl` | `turn.completed` events | summed input/output/cached tokens; cost not reported (left empty rather than estimated); source `reported` |
-| pane agents | — | `unknown` (runtime only) |
+| pane agents (Claude, Codex) | the agent's own session log, for the step's time window | Claude: `message.usage` of assistant lines, de-duplicated by message id, subagent transcripts included; Codex: growth of the cumulative `token_count` totals. Source `reported` when Herdr gave the native session id, `estimated` when the log was found by the worktree path. Cost stays empty (logs carry no price). |
+| other pane agents | — | `unknown` (runtime only) |
 | commands | — | runtime, source `measured` |
 
 Totals keep the weakest provenance: mixing reported and unknown values
 yields `estimated` (a lower bound). The UI shows "$1.84 reported" versus
-"~$1.84 estimated". `limits.max_cost_usd` / `max_tokens` are advisory and
-only meaningful when a runner reports numbers.
+"~$1.84 estimated", and token columns show `~` for estimates and `–` for
+unknown. `herdr-orchestrator usage` sums agent usage per task.
+
+Session logs: Claude `$CLAUDE_CONFIG_DIR` or `~/.claude`, file
+`projects/<slug>/<session_id>.jsonl` (plus `<session_id>/subagents/*.jsonl`);
+Codex `$CODEX_HOME` or `~/.codex`, `sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`
+(the last eight day directories are searched). Pane agents keep one session
+across retries, so each execution only counts lines between its start and
+end. Read-only and local; off with `usage.session_logs: false`.
+
+`limits.max_tokens` / `max_cost_usd` are enforced on known numbers: after an
+agent step whose run total exceeds them, the run asks once whether to
+continue (`budget_exceeded`; deny → `blocked`). Unknown usage never counts
+as under budget, it just cannot be enforced.
 
 ## Configuring runners
 

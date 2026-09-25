@@ -16,12 +16,19 @@ pub const BUILTIN_WORKFLOWS: &[(&str, &str)] = &[
     ("implement-review", include_str!("../../workflows/implement-review.yaml")),
     ("secure-change", include_str!("../../workflows/secure-change.yaml")),
     ("variant-review", include_str!("../../workflows/variant-review.yaml")),
+    ("dual-review", include_str!("../../workflows/dual-review.yaml")),
+    ("epic-task", include_str!("../../workflows/epic-task.yaml")),
+    ("epic-plan", include_str!("../../workflows/epic-plan.yaml")),
+    ("epic-conformance", include_str!("../../workflows/epic-conformance.yaml")),
 ];
 
 pub const BUILTIN_SKILLS: &[(&str, &str)] = &[
     ("implementation", include_str!("../../skills/implementation.md")),
     ("code-review", include_str!("../../skills/code-review.md")),
     ("security-review", include_str!("../../skills/security-review.md")),
+    ("adr-planning", include_str!("../../skills/adr-planning.md")),
+    ("acceptance-review", include_str!("../../skills/acceptance-review.md")),
+    ("adr-conformance", include_str!("../../skills/adr-conformance.md")),
 ];
 
 #[derive(Debug, Clone)]

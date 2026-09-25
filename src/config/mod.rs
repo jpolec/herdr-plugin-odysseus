@@ -40,6 +40,9 @@ pub struct Config {
     pub herdr: HerdrConfig,
     pub output: OutputConfig,
     pub sandbox: SandboxConfig,
+    pub usage: UsageConfig,
+    pub guard: GuardConfig,
+    pub epic: EpicConfig,
     /// Runner profile overrides keyed by runner name.
     pub runners: BTreeMap<String, RunnerProfileConfig>,
     /// Named check commands (`tests`, `lint`, `security`) as argv arrays.
@@ -63,6 +66,9 @@ impl Default for Config {
             herdr: Default::default(),
             output: Default::default(),
             sandbox: Default::default(),
+            usage: Default::default(),
+            guard: Default::default(),
+            epic: Default::default(),
             runners: BTreeMap::new(),
             checks: BTreeMap::new(),
         }
@@ -194,11 +200,15 @@ pub struct GithubConfig {
     pub auto_merge: bool,
     pub base: Option<String>,
     pub push_before_pr: bool,
+    /// While the engine runs, check open PRs of recent runs for failing CI
+    /// and review comments and notify (never starts anything by itself).
+    pub watch_prs: bool,
+    pub watch_interval: HumanDuration,
 }
 
 impl Default for GithubConfig {
     fn default() -> Self {
-        Self { draft_pr: true, auto_merge: false, base: None, push_before_pr: true }
+        Self { draft_pr: true, auto_merge: false, base: None, push_before_pr: true, watch_prs: false, watch_interval: HumanDuration::from_secs(10 * 60) }
     }
 }
 
@@ -270,6 +280,105 @@ impl Default for OutputConfig {
 #[serde(deny_unknown_fields, default)]
 pub struct SandboxConfig {
     pub kind: SandboxKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct UsageConfig {
+    /// Read token usage of pane agents from their own local session logs
+    /// (`~/.claude/projects`, `~/.codex/sessions`). Read-only, local.
+    pub session_logs: bool,
+}
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self { session_logs: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct GuardConfig {
+    /// Start Claude pane agents with a `PreToolUse` hook that checks each
+    /// tool call against policy *before* it runs (DENY blocks it).
+    pub claude_hook: bool,
+    /// After a failed check routes back to an agent, ask a human before
+    /// continuing if the new attempt changed only tests or check config.
+    pub test_only_retry: bool,
+    /// Globs that count as tests or test/check configuration.
+    pub test_paths: Vec<String>,
+}
+
+impl Default for GuardConfig {
+    fn default() -> Self {
+        Self {
+            claude_hook: true,
+            test_only_retry: true,
+            test_paths: [
+                "**/tests/**",
+                "**/test/**",
+                "**/__tests__/**",
+                "**/spec/**",
+                "**/*_test.*",
+                "**/*_spec.*",
+                "**/*.test.*",
+                "**/*.spec.*",
+                "**/test_*.py",
+                "**/conftest.py",
+                "**/pytest.ini",
+                "**/tox.ini",
+                "**/setup.cfg",
+                "**/jest.config*",
+                "**/vitest.config*",
+                "**/karma.conf*",
+                "**/.mocharc*",
+                "**/phpunit.xml*",
+                "**/.nycrc*",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        }
+    }
+}
+
+/// When a dependency of an epic task counts as done.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DependencyMode {
+    /// The dependency's commits are in the dependent's base branch (checked
+    /// locally with `git merge-base --is-ancestor`; pull after merging).
+    #[default]
+    Merged,
+    /// The dependent task branches from the dependency's branch and its PR
+    /// targets that branch. At most one unmerged dependency.
+    Stacked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct EpicConfig {
+    /// Where ADRs live, relative to the repository root.
+    pub adr_dirs: Vec<String>,
+    /// Upper bound on the number of tasks a plan may propose.
+    pub max_tasks: usize,
+    /// Runner for the planning and conformance agents (default: defaults.runner).
+    pub planner_runner: Option<String>,
+    /// Workflow for accepted tasks that do not name one.
+    pub task_workflow: String,
+    pub dependency_mode: DependencyMode,
+}
+
+impl Default for EpicConfig {
+    fn default() -> Self {
+        Self {
+            adr_dirs: ["docs/adr", "doc/adr", "docs/decisions", "docs/architecture/decisions", "adr", ".ai/adr"].iter().map(|s| s.to_string()).collect(),
+            max_tasks: 12,
+            planner_runner: None,
+            task_workflow: "epic-task".into(),
+            dependency_mode: DependencyMode::Merged,
+        }
+    }
 }
 
 /// Overrides for a runner. See `runners::profiles` for built-ins.
@@ -496,6 +605,9 @@ pub fn validate(c: &Config) -> Result<()> {
         bail!("limits.max_agents_per_run must be at least 1");
     }
     crate::git::validate_branch_prefix(&c.git.branch_prefix)?;
+    if c.epic.max_tasks == 0 || c.epic.max_tasks > 50 {
+        bail!("epic.max_tasks must be between 1 and 50");
+    }
     if Path::new(&c.git.worktree_root).components().any(|p| matches!(p, std::path::Component::ParentDir)) {
         bail!("git.worktree_root must not contain '..'");
     }

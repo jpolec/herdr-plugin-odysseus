@@ -58,6 +58,29 @@ pub enum AgentOutput {
     Summary,
     /// Review verdict + findings (validated JSON).
     Review,
+    /// A task plan for an ADR (validated JSON). Read-only: the step fails if
+    /// the agent changes the worktree.
+    Plan,
+    /// Per-criterion judgement of the task's acceptance criteria.
+    Acceptance,
+    /// Epic result vs. its ADR, with proposed follow-ups. Read-only.
+    Conformance,
+}
+
+impl AgentOutput {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Review => "review",
+            Self::Plan => "plan",
+            Self::Acceptance => "acceptance",
+            Self::Conformance => "conformance",
+        }
+    }
+    /// Outputs whose step must not change any file.
+    pub fn read_only(self) -> bool {
+        matches!(self, Self::Plan | Self::Conformance)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -243,8 +266,8 @@ impl Workflow {
             match &s.spec {
                 StepSpec::Agent { prompt, gate, output, .. } => {
                     template::check(prompt, &earlier).with_context(ctx)?;
-                    if *gate && *output != AgentOutput::Review {
-                        bail!("{}: `gate: true` requires `output: review`", ctx());
+                    if *gate && !matches!(output, AgentOutput::Review | AgentOutput::Acceptance) {
+                        bail!("{}: `gate: true` requires `output: review` or `output: acceptance`", ctx());
                     }
                 }
                 StepSpec::Check { check: Some(name), command, .. } => {

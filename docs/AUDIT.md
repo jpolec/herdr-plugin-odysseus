@@ -62,6 +62,16 @@ Global log:
 | `task_failed` | a queued task could not be started (e.g. its workflow became invalid) |
 | `queue_paused`, `queue_resumed` | `queue pause/resume` or the TUI `p` key |
 | `daemon_started`, `daemon_stopped` | engine daemon lifecycle (pid, version, Herdr socket) |
+| `task_blocked_by_dependency`, `task_unblocked` | a dependency failed or was cancelled / the task may wait or start again |
+| `dependencies_overridden` | `task unblock`: a human started a task regardless of its dependencies |
+| `epic_created` | `epic create` (epic id, ADR path, ADR SHA-256, title) |
+| `plan_proposed`, `plan_failed` | the planning task produced a valid plan (plan SHA-256) / failed |
+| `plan_accepted` | a human accepted plan tasks (keys, created task ids, approved commands, plan SHA-256, note) |
+| `plan_rejected` | plan or some of its tasks declined (keys, note) |
+| `plan_regenerated` | `epic replan` (feedback, whether the ADR changed) |
+| `plan_edited` | `epic edit` (new plan SHA-256) |
+| `conformance_requested`, `conformance_reviewed` | `epic verify` queued / its result (open follow-up keys) |
+| `epic_done` | every accepted task of the epic finished |
 
 Run logs:
 
@@ -83,8 +93,17 @@ Run logs:
 | `agent_prompt_sent` | prompt submitted (SHA-256 of the prompt, pane) |
 | `agent_blocked`, `agent_unblocked` | the agent waited for a human in its own UI |
 | `agent_failed` | agent timed out, failed or was lost |
-| `usage_recorded` | tokens/cost/runtime with provenance |
+| `usage_recorded` | tokens/cost/runtime with provenance (pane agents: read from their session logs) |
+| `budget_exceeded` | run usage passed `limits.max_tokens`/`max_cost_usd`; an approval follows |
 | `review_completed` | review verdict and finding count, or the parse error |
+| `acceptance_verified` | acceptance review: met / not met / unverifiable counts and each criterion |
+| `plan_proposed`, `conformance_reviewed` | validated `output: plan` / `output: conformance` of a step |
+| `plan_invalid`, `acceptance_invalid`, `conformance_invalid` | structured output failed validation (parse error) |
+| `read_only_violation` | a plan/conformance step changed the worktree |
+| `test_only_retry` | after a failed check the retry changed only tests (approval follows) |
+| `agent_tool_checked` | Claude `PreToolUse` hook: a non-allow decision for a tool call (`blocked: true` for DENY) |
+| `pr_feedback_detected` | PR watcher found new failing checks or review comments |
+| `pr_followup_created` | `run followup`: follow-up task created (task, PR, failing checks, comments) |
 | `files_changed` | changed paths with +/- counts at a policy gate |
 | `command_requested` | a command/check is about to be evaluated (argv, shell, source) |
 | `command_started` | process spawned (argv, pid, cwd, env **names** only) |
@@ -108,7 +127,7 @@ Run logs:
 | `run_needs_human` | stopped in an ambiguous state |
 | `run_stopped` | other non-terminal stop |
 | `run_cancelled` | cancellation completed |
-| `worktree_removed` | worktree cleaned up after success (`git.cleanup_on_success`) |
+| `worktree_removed` | worktree cleaned up after success (`git.cleanup_on_success`) or by `gc` (`via: gc`, reason) |
 | `variant_selected` | a human selected this variant |
 | `recovery_started`, `recovery_completed` | startup reconciliation (classification, reason, old/new status) |
 
