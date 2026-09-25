@@ -309,6 +309,8 @@ pub struct GuardConfig {
     pub test_paths: Vec<String>,
     /// Notice pane agents that are busy without making progress.
     pub watchdog: crate::runners::watchdog::WatchdogConfig,
+    /// Remind about `learn` once this many findings piled up (0 = never).
+    pub learn_reminder: usize,
 }
 
 impl Default for GuardConfig {
@@ -341,6 +343,7 @@ impl Default for GuardConfig {
             .map(|s| s.to_string())
             .collect(),
             watchdog: Default::default(),
+            learn_reminder: 20,
         }
     }
 }
