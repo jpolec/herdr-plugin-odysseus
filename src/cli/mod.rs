@@ -91,6 +91,15 @@ pub enum Cmd {
     },
     /// Outcomes per implementing runner and workflow (local data only).
     Stats,
+    /// Everything that needs you, most urgent first, with risk and reasons.
+    Inbox {
+        /// How far back finished work is listed (default 24h).
+        #[arg(long, default_value = "24h")]
+        since: String,
+    },
+    /// Unattended work with a deadline and a token budget.
+    #[command(subcommand)]
+    Shift(ShiftCmd),
     /// Your repository's own benchmark: replay recorded tasks on other agents.
     #[command(subcommand)]
     Eval(EvalCmd),
@@ -195,6 +204,22 @@ pub enum TaskCmd {
     },
     /// Start a task now even though its dependencies are not done.
     Unblock { task: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ShiftCmd {
+    /// Start: the queue runs until the deadline or budget, then pauses and
+    /// notifies you that the inbox is ready.
+    Start {
+        /// `07:00` (next occurrence) or a duration like `8h`.
+        #[arg(long)]
+        until: Option<String>,
+        /// Token budget for agent steps started during the shift.
+        #[arg(long)]
+        budget: Option<u64>,
+    },
+    Status,
+    Stop,
 }
 
 #[derive(Subcommand, Debug)]
@@ -388,6 +413,12 @@ pub enum ApprovalCmd {
         approval: String,
         #[arg(long)]
         note: Option<String>,
+    },
+    /// Approve every pending "ship it?" step whose run is at most this risk
+    /// (policy questions are never approved in bulk).
+    Batch {
+        #[arg(long, default_value = "low")]
+        max_risk: String,
     },
 }
 
@@ -620,6 +651,8 @@ pub fn main() -> Result<i32> {
         Cmd::Gc { yes, check_prs, failed, days } => gc_cmd(&app, yes, check_prs, failed, days),
         Cmd::Stats => stats_cmd(&app),
         Cmd::Eval(c) => eval_cmd(&app, c),
+        Cmd::Inbox { since } => inbox_cmd(&app, &since),
+        Cmd::Shift(c) => shift_cmd(&app, c),
         Cmd::Receipt(ReceiptCmd::Verify { run, at }) => {
             let ctx = app.ctx(false)?;
             let r = engine::receipt::verify(&ctx, &run, at.as_deref())?;
@@ -999,6 +1032,17 @@ fn approval_cmd(app: &App, c: ApprovalCmd) -> Result<i32> {
         }
         ApprovalCmd::Approve { approval, note } => decide(app, &ctx, &approval, true, note),
         ApprovalCmd::Deny { approval, note } => decide(app, &ctx, &approval, false, note),
+        ApprovalCmd::Batch { max_risk } => {
+            let max: engine::digest::RiskLevel = serde_json::from_value(serde_json::Value::String(max_risk.clone())).with_context(|| format!("--max-risk must be low, medium or high, not {max_risk}"))?;
+            if app.dry_run {
+                println!("would approve workflow-step approvals up to {max_risk} risk");
+                return Ok(0);
+            }
+            let done = engine::digest::approve_batch(&ctx, max, user())?;
+            crate::daemon::nudge(&ctx.store.layout);
+            println!("approved {} approval(s): {}", done.len(), done.join(", "));
+            Ok(0)
+        }
     }
 }
 
@@ -1517,6 +1561,81 @@ fn epic_cmd(app: &App, c: EpicCmd) -> Result<i32> {
             println!("epic {}: conformance review queued (task #{})", e.epic_id, e.conformance_task.clone().unwrap_or_default());
             app.ensure_daemon()?;
         }
+    }
+    Ok(0)
+}
+
+fn inbox_cmd(app: &App, since: &str) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    if !app.cli_json {
+        for l in inbox_lines(&ctx, since)? {
+            println!("{l}");
+        }
+        return Ok(0);
+    }
+    let _ = crate::epic::engine::sync(&ctx);
+    let d: crate::config::HumanDuration = serde_json::from_value(serde_json::Value::String(since.into())).context("--since must be a duration like 12h")?;
+    let items = engine::digest::inbox(&ctx, chrono::Duration::from_std(d.as_duration())?)?;
+    app.print_json(&items).map(|_| 0)
+}
+
+pub(crate) fn inbox_lines(ctx: &EngineCtx, since: &str) -> Result<Vec<String>> {
+    let _ = crate::epic::engine::sync(ctx);
+    let d: crate::config::HumanDuration = serde_json::from_value(serde_json::Value::String(since.into())).context("--since must be a duration like 12h")?;
+    let items = engine::digest::inbox(ctx, chrono::Duration::from_std(d.as_duration())?)?;
+    let mut out: Vec<String> = vec![];
+    if let Some(s) = engine::digest::load_shift(ctx) {
+        let used = engine::digest::shift_tokens(ctx, &s).unwrap_or(0);
+        out.push(format!("Shift since {}: {used} tokens{}{}\n", s.started_at.with_timezone(&chrono::Local).format("%H:%M"), s.budget_tokens.map(|b| format!(" of {b}")).unwrap_or_default(), s.ended.as_ref().map(|e| format!(" — ended: {e}")).unwrap_or_default()));
+    }
+    if items.is_empty() {
+        out.push("Nothing needs you.".into());
+        return Ok(out);
+    }
+    use engine::digest::InboxItem::*;
+    for i in &items {
+        match i {
+            Agent { run, step, reason, .. } => out.push(format!("AGENT     {run:<6} {step}: {reason}   → herdr-orchestrator run focus '{run}'")),
+            Approval { approval_id, run, step, reason, risk, workflow_step, .. } => {
+                out.push(format!("APPROVE   {run:<6} [{}] {step}: {reason}   → approval show {approval_id}", risk.level.as_str()));
+                out.push(format!("          {}{}", risk.reasons.join("; "), if *workflow_step && risk.level == engine::digest::RiskLevel::Low { "   (batch-approvable)" } else { "" }));
+            }
+            Stopped { run, status, reason, .. } => out.push(format!("STOPPED   {run:<6} {status}: {reason}   → run show '{run}'")),
+            Plan { epic_id, title, open } => out.push(format!("PLAN      {epic_id:<6} {title}: {open} task(s) to decide   → epic show {epic_id}")),
+            Ready { run, title, pr, risk, .. } => {
+                out.push(format!("READY     {run:<6} [{}] {title}{}", risk.level.as_str(), pr.as_ref().map(|p| format!("   {p}")).unwrap_or_default()));
+                out.push(format!("          {}", risk.reasons.join("; ")));
+            }
+        }
+    }
+    let low = items.iter().filter(|i| matches!(i, Approval { workflow_step: true, risk, .. } if risk.level == engine::digest::RiskLevel::Low)).count();
+    if low > 0 {
+        out.push(format!("\n{low} low-risk \"ship it?\" approval(s): herdr-orchestrator approval batch --max-risk low"));
+    }
+    Ok(out)
+}
+
+fn shift_cmd(app: &App, c: ShiftCmd) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    match c {
+        ShiftCmd::Start { until, budget } => {
+            let until = until.as_deref().map(engine::digest::parse_until).transpose()?;
+            let s = engine::digest::start_shift(&ctx, until, budget, user())?;
+            println!(
+                "shift started{}{}; the queue pauses when it ends and `inbox` has everything that needs you",
+                s.until.map(|u| format!(" until {}", u.with_timezone(&chrono::Local).format("%a %H:%M"))).unwrap_or_default(),
+                s.budget_tokens.map(|b| format!(", budget {b} tokens")).unwrap_or_default()
+            );
+            app.ensure_daemon()?;
+        }
+        ShiftCmd::Status => match engine::digest::load_shift(&ctx) {
+            Some(s) => println!("shift since {}: {} tokens used{}{}", s.started_at.with_timezone(&chrono::Local).format("%a %H:%M"), engine::digest::shift_tokens(&ctx, &s)?, s.budget_tokens.map(|b| format!(" of {b}")).unwrap_or_default(), s.ended.map(|e| format!("; ended: {e}")).unwrap_or_else(|| s.until.map(|u| format!("; ends {}", u.with_timezone(&chrono::Local).format("%a %H:%M"))).unwrap_or_default())),
+            None => println!("no shift"),
+        },
+        ShiftCmd::Stop => match engine::digest::stop_shift(&ctx, "stopped by user")? {
+            Some(_) => println!("shift stopped (the queue keeps its current state)"),
+            None => println!("no shift"),
+        },
     }
     Ok(0)
 }

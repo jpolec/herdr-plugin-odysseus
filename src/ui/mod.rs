@@ -29,6 +29,8 @@ pub enum Screen {
     NewTask,
     /// Live view of an agent that is waiting for a human; keys are forwarded.
     Agent(String),
+    /// Everything that needs the human (risk-ranked).
+    Inbox { scroll: usize },
     /// ADR epics.
     Epics,
     EpicDetail { id: String, scroll: usize },
@@ -39,6 +41,7 @@ pub enum Pending {
     CancelRun(String),
     Deny(String),
     RejectEpic(String),
+    BatchApprove,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +72,8 @@ pub struct State {
     pub epic_lines: Vec<String>,
     /// Pre-rendered one-line summaries for the Epics screen.
     pub epic_rows: Vec<String>,
+    /// Pre-rendered inbox.
+    pub inbox_lines: Vec<String>,
     pub selected: usize,
     pub message: Option<(String, Instant)>,
     pub confirm: Option<Pending>,
@@ -92,6 +97,7 @@ impl State {
             epics: vec![],
             epic_lines: vec![],
             epic_rows: vec![],
+            inbox_lines: vec![],
             selected: 0,
             message: None,
             confirm: None,
@@ -182,6 +188,9 @@ fn load(state: &mut State, ctx: &crate::engine::EngineCtx) {
                 Err(e) => vec![format!("{e:#}")],
             };
         }
+    }
+    if matches!(state.screen, Screen::Inbox { .. }) {
+        state.inbox_lines = crate::cli::inbox_lines(ctx, "24h").unwrap_or_else(|e| vec![format!("{e:#}")]);
     }
     state.paused = ctx.store.load_scheduler().map(|s| s.paused).unwrap_or(false);
     if let Screen::Agent(id) = &state.screen {
@@ -347,6 +356,13 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
                     }
                     Err(e) => state.flash(format!("{e:#}")),
                 },
+                Pending::BatchApprove => match crate::engine::digest::approve_batch(ctx, crate::engine::digest::RiskLevel::Low, user) {
+                    Ok(v) => {
+                        crate::daemon::nudge(&ctx.store.layout);
+                        state.flash(format!("approved {} low-risk approval(s)", v.len()));
+                    }
+                    Err(e) => state.flash(format!("{e:#}")),
+                },
                 Pending::RejectEpic(id) => match crate::epic::engine::reject(ctx, &id, None, Some("rejected from orchestrator pane".into()), user) {
                     Ok(e) => state.flash(format!("epic {} {}", e.epic_id, e.status.as_str())),
                     Err(e) => state.flash(format!("{e:#}")),
@@ -395,6 +411,28 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
     }
     if matches!(state.screen, Screen::Epics | Screen::EpicDetail { .. }) {
         return epic_key(ctx, state, k);
+    }
+    if let Screen::Inbox { scroll } = &mut state.screen {
+        match k.code {
+            KeyCode::Down | KeyCode::Char('j') => *scroll = (*scroll + 1).min(state.inbox_lines.len().saturating_sub(1)),
+            KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+            KeyCode::Char('a') => {
+                state.screen = Screen::Approvals;
+                state.selected = 0;
+            }
+            KeyCode::Char('A') => state.confirm = Some(Pending::BatchApprove),
+            KeyCode::Char('e') => {
+                state.screen = Screen::Epics;
+                state.selected = 0;
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                state.screen = Screen::Dashboard;
+                state.selected = 0;
+            }
+            _ => {}
+        }
+        load(state, ctx);
+        return Ok(false);
     }
     match k.code {
         KeyCode::Down | KeyCode::Char('j') => {
@@ -521,6 +559,11 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
                 state.flash(m);
             }
         }
+        KeyCode::Char('i') if matches!(state.screen, Screen::Dashboard) => {
+            state.screen = Screen::Inbox { scroll: 0 };
+            load(state, ctx);
+        }
+        KeyCode::Char('A') if matches!(state.screen, Screen::Approvals) => state.confirm = Some(Pending::BatchApprove),
         KeyCode::Char('e') if matches!(state.screen, Screen::Dashboard) => {
             state.screen = Screen::Epics;
             state.selected = 0;

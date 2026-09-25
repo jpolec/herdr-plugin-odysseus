@@ -87,6 +87,9 @@ impl Scheduler {
         if let Err(e) = crate::epic::engine::sync(&self.ctx) {
             tracing::warn!("epic sync failed: {e:#}");
         }
+        if let Err(e) = super::digest::enforce_shift(&self.ctx) {
+            tracing::warn!("shift check failed: {e:#}");
+        }
         let paused = self.ctx.store.load_scheduler()?.paused;
         if paused {
             return Ok(rep);
