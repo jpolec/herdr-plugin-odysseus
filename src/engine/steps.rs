@@ -501,7 +501,8 @@ impl<'a> RunDriver<'a> {
             return Ok(Err(StepOutcome::Cancelled));
         }
         let combined = format!("{}{}", out.stdout_str(), out.stderr_str());
-        let excerpt = crate::checks::excerpt(&redact_str(&combined), 10, 30, 4000);
+        let status = if out.timed_out { "timed out".to_string() } else { format!("exit status {}", out.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "?".into())) };
+        let excerpt = if combined.trim().is_empty() { format!("(no output; {status})") } else { format!("{}\n({status})", crate::checks::excerpt(&redact_str(&combined), 10, 30, 4000)) };
         self.audit("contract_probe", Actor::orchestrator(), Some(&step.id), serde_json::json!({"argv": argv, "exit_code": out.exit_code, "timed_out": out.timed_out}));
         Ok(Ok((out.success(), excerpt)))
     }

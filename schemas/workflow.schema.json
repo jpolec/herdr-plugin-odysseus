@@ -120,7 +120,8 @@
                   "review",
                   "plan",
                   "acceptance",
-                  "conformance"
+                  "conformance",
+                  "contract"
                 ],
                 "default": "summary"
               },
@@ -282,6 +283,10 @@
                   "lint",
                   "security"
                 ]
+              },
+              "contract": {
+                "type": "boolean",
+                "description": "check steps: run the locked contract's own check (no check/command)"
               },
               "command": {
                 "type": "array",

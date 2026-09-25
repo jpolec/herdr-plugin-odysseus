@@ -52,7 +52,7 @@ Herdr pane (see [RUNNERS.md](RUNNERS.md)).
 | `prompt` | required | Prompt template. |
 | `runner` | see *Runner precedence* | `claude`, `codex`, `opencode`, `fake-success`, custom… |
 | `skill` | none | Markdown skill prepended to the prompt. |
-| `output` | `summary` | `summary` (free text / `{"summary": …}`), `review` (validated verdict JSON), `acceptance` (a judgement per acceptance criterion), `plan` (an ADR task plan; read-only) or `conformance` (epic vs. ADR; read-only). |
+| `output` | `summary` | `summary` (free text / `{"summary": …}`), `review` (validated verdict JSON), `acceptance` (a judgement per acceptance criterion), `plan` (an ADR task plan; read-only), `conformance` (epic vs. ADR; read-only) or `contract` (tests written before the implementation; see below). |
 | `gate` | `false` | With `output: review`: a verdict other than `approved` (or unparseable output) fails the step; with `output: acceptance`: any `not_met` criterion fails it — so `on_failure` can send the findings back to the implementer. Allowed only with `review` and `acceptance`. |
 | `commit` | `git.auto_commit` (true) | Commit worktree changes after the step (hooks disabled, `.herdr-orchestrator/` never committed). |
 | `policy_check` | `true` | Evaluate the worktree diff against policy after the step. |
@@ -128,6 +128,50 @@ HEAD moved after the step, the step fails and the run is `blocked`
 that cannot be validated always fails the step (with or without `gate`),
 and the validation errors are the retry feedback.
 
+#### `output: contract`
+
+The agent writes executable tests for the task — not the implementation —
+and reports them:
+
+```json
+{"files": ["tests/rate_limit.rs"],
+ "check": ["cargo", "test", "--test", "rate_limit"],
+ "criteria_map": {"1": ["over_limit_returns_429"], "2": ["limit_is_configurable"]},
+ "summary": "…"}
+```
+
+Validation: at least one and at most 50 files, each a relative path that
+exists inside the worktree (not under `.herdr-orchestrator/`); `check` an
+argv array without templates (when missing, the named `tests` check is
+used); when the task has acceptance criteria, every criterion needs at
+least one test in `criteria_map`. An invalid result fails the step with the
+errors as feedback.
+
+Then, after the files are committed:
+
+1. **Red proof.** The contract's check runs (with the normal policy
+   pre-flight) and must **fail**. If it already passes, the contract proves
+   nothing: the step fails with that explanation as feedback
+   (`contract_not_red`).
+2. **Lock.** The files' SHA-256 hashes, the check, the criteria map, the
+   contract commit and the tail of the failing output are recorded in the
+   run (`contract_locked`). From now on any change to a contract file is a
+   DENY at the diff gate ("contract file changed after it was locked") and,
+   for Claude, the `PreToolUse` hook refuses `Write`/`Edit` of those paths.
+3. **Approval.** The first approval after the lock approves the contract:
+   the approval screen shows the files, the check, the criteria map and the
+   red output (`contract_approved`). If the approver edited contract files
+   before saying yes, their version is re-hashed and locked and the contract
+   is marked *amended* (`contract_amended`) — no new red proof: it is their
+   call, and the receipt says so.
+4. **Green and receipt.** A `check` with `contract: true` runs the locked
+   check. The PR step refuses to push if a contract file changed, and the PR
+   body gets a *Contract* section plus a machine-readable receipt block
+   (`herdr-orchestrator-receipt: v1`, run, `contract_sha256`, contract
+   commit, approval id, audit chain head). `herdr-orchestrator receipt verify
+   <run|pr-url> [--at rev]` re-checks the files at a commit, the approval and
+   the audit chain (exit 0/1).
+
 ### `command`
 
 Runs an argv array directly (no shell).
@@ -169,8 +213,9 @@ or a **named check**:
   check: tests          # tests | lint | security
 ```
 
-`check:` and `command:` are mutually exclusive. Named checks resolve at run
-time in the worktree:
+`check:` and `command:` are mutually exclusive. `contract: true` (with
+neither) runs the run's locked contract check — the step is `blocked` when
+no contract was locked. Named checks resolve at run time in the worktree:
 
 1. `checks.<name>` in configuration (argv array) wins. An empty list `[]`
    disables the check.
@@ -315,6 +360,7 @@ re-expanded.
 | `{{step.<id>.output}}` | Output of an earlier step `<id>` (≤ 8 KiB) | no |
 | `{{feedback}}` | Retry feedback, empty on a first attempt | no |
 | `{{acceptance}}` | The task's numbered acceptance criteria (epic tasks), empty otherwise | no |
+| `{{contract}}` | The locked contract's files and check, empty before a contract is locked | no |
 
 Trust rules (enforced by `workflow validate` and at load):
 
@@ -454,6 +500,31 @@ Verification from the accepted plan is inserted as `check` steps before the
 first reviewing step (`plan-<check>-N` for named checks not already in the
 workflow, `plan-check-N` for commands), retrying the first agent step with
 feedback. The run's workflow snapshot records the augmented YAML.
+
+### `contract-first`
+
+Tests first, locked once you approve them (skill `contract-writing`).
+
+```text
+contract (tests; check must FAIL) ──► approve-contract (you see files, check, criteria, red output; approving locks)
+──► implement (contract locked) ──► contract-green (check contract: true, retry ×3)
+──► tests (retry ×2) ──► review (claude) ──► approval ──► pr (draft, with receipt)
+```
+
+Works for epic tasks too (`epic.task_workflow: contract-first`: every
+acceptance criterion must map to a test) and is the default for Sentry
+incident tasks (the contract is the reproduction).
+
+### `eval-task`, `update-verify`, `update-resolve` (internal)
+
+- `eval-task` (used by `eval run`): the case's contract is committed and
+  locked when the worktree is created; implement → `contract: true` check
+  (retry ×2) → tests. No approvals, no PR.
+- `update-verify` (used by `run update` after a clean merge): tests →
+  approval → push to the existing PR.
+- `update-resolve` (after a merge with conflicts): an agent resolves the
+  conflicts → tests (retry ×2) → approval → push. The run diffs against the
+  merged base, so what came from the base is not the branch's own change.
 
 ### `epic-plan`, `epic-conformance` (internal)
 

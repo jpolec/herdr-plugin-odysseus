@@ -210,6 +210,45 @@ agent step whose run total exceeds them, the run asks once whether to
 continue (`budget_exceeded`; deny → `blocked`). Unknown usage never counts
 as under budget, it just cannot be enforced.
 
+## Watchdog (pane agents)
+
+`guard.watchdog` observes a pane agent while Herdr reports it `working`,
+every `check_every` (default 60 s): the last 60 lines of its pane, a
+fingerprint of the worktree (HEAD, per-file line counts, untracked files)
+and the tokens it used since the step started (from its session log).
+
+It fires when there has been **no progress** — no worktree change for
+`idle_after` (15 min) while at least `burn_tokens` (150 000) were used, or
+usage is unknown — together with either a **stall** (the pane unchanged for
+`stall_after`, 20 min) or a **repeat** (the same error line, digits
+normalised, seen after `repeat_threshold` (4) screen changes over at least a
+quarter of `stall_after`). A long, quiet test run alone never fires it.
+
+Firing moves the step to `awaiting_human` with the reason
+(`StepExecution.attention`, event `agent_stuck`, an urgent notification,
+"looks stuck" on the dashboard). The step is never failed or interrupted;
+when the worktree changes again the step returns to `running`
+(`agent_progressing`) and the watchdog re-arms. Headless agents are covered
+by their timeouts only. Each check re-reads the agent's session log, so
+very short `check_every` values cost I/O on long sessions.
+
+```yaml
+guard:
+  watchdog:
+    enabled: true
+    check_every: 60s
+    stall_after: 20m
+    idle_after: 15m
+    burn_tokens: 150000
+    repeat_threshold: 4
+```
+
+Fake scenarios for contracts and updates: `fake-contract` (writes
+`tests/contract.txt`, check `test -f FIXED`), `fake-contract-green` (a check
+that already passes), `fake-fix-contract` (makes it pass),
+`fake-contract-tamper` (edits the contract), `fake-resolve-conflicts`
+(removes conflict markers).
+
 ## Configuring runners
 
 Overrides go under `runners:` in global or project config. Fields: `mode`

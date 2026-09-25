@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.0] - 2026-09-25
+
+Contract-first delivery, a morning inbox for unattended work, a benchmark from your own repository, and integrations with GitHub issues and Sentry.
+
+### Added
+- **Contract-first delivery** (workflow `contract-first`, skill `contract-writing`). An agent first writes the tests for the task (`output: contract`: the test files, the command that runs them, and which test covers which acceptance criterion). The contract's check must **fail** on the current code — a contract that already passes goes back to its writer. You approve the contract, seeing its files, check, criteria map and the failing output; from then on it is **locked**: any change to a contract file is denied at the diff gate (content hash) and, for Claude, refused by the `PreToolUse` hook before it happens. `check` steps with `contract: true` run the locked check. If you edit the tests before approving, the lock takes your version and the receipt says it was amended. The PR body carries a receipt (contract hash, approver, audit head); `herdr-orchestrator receipt verify <run|pr-url> [--at rev]` re-checks it from git and the audit chain.
+- **Your repository's own benchmark.** `eval record <run>` turns a succeeded contract-first run into a case (base commit, task, approved contract). `eval run --runners claude,codex,… [--cases …|--last N]` replays cases on several agents from the same base with the same contract seeded and locked (workflow `eval-task`); without `--yes` it only prints a cost estimate from your history. `eval report` ranks runners by cases passed, attempts, tokens and time. `eval list`.
+- **Morning inbox.** `herdr-orchestrator inbox [--since 24h]` (and `[i]` in the pane) lists everything that needs you, most urgent first: agents asking or stuck, approvals, stopped runs, plans to decide, finished work. Approvals and finished work carry a risk level (`low`/`medium`/`high`) with the reasons it was derived from — sensitive rules that fired, diff size, review findings, acceptance results, retries, the watchdog, an approved contract. `approval batch --max-risk low` (or `[A]`) approves all "ship it?" steps up to that risk; policy questions are never approved in bulk.
+- **Night shift.** `shift start --until 07:00 --budget 2000000` runs the queue until the deadline or token budget, then pauses it and notifies you that the inbox is ready; `shift status`, `shift stop`.
+- **Watchdog for agents in panes** (`guard.watchdog`): an agent that is busy without progress — screen unchanged or the same error coming back, while no file changes and tokens are being used (or usage is unknown) — is handed to you as `awaiting_human` with the reason, shown on the dashboard as "looks stuck". It never fails a step and re-arms when the agent makes progress.
+- **Learning from reviews.** `herdr-orchestrator learn [--all] [--list]` collects recurring review findings, unmet acceptance criteria, PR review comments and guardrail hits, and queues a task for an agent to turn them into rules in `AGENTS.md` / `CLAUDE.md` / `.ai/skills/`. Those files need your approval (default policy), so nothing changes silently. `guard.learn_reminder` (default 20) notifies at most daily when findings pile up.
+- **GitHub tracker** (`github.tracker`). `tracker sync`: a milestone per epic, an issue per accepted epic task (description, acceptance checklist, manual checks), status comments posted once per change (started, done with PR or branch and tokens, failed, blocked), `Closes #N` in the PR body; optionally the issue is added to a Projects board (`github.tracker.project: owner/number`, needs `gh auth refresh -s project`). `tracker import [--label agent-ready] [--yes]` queues tasks from labelled issues. `github.tracker.auto_sync` syncs while the engine runs.
+- **Production errors from Sentry.** `incidents list`, `incidents show <id>`, `incidents task <id|SHORT-ID>` turn an unresolved Sentry issue into a task that reproduces the error with a failing test first and then fixes it (default workflow `contract-first`); the PR links the Sentry issue. Configure `sentry.org`, `sentry.project`; token from `SENTRY_AUTH_TOKEN`.
+- **Parallel work without collisions.** `scheduler.avoid_conflicts` (default on): a task with a `scope` waits while an active run's scope or changed files overlap it ("may conflict with #12"). `run update <run> [--onto main]` (or `[u]`) merges the moved base into a finished run's branch — never a rebase or force push; a clean merge is re-tested (`update-verify`), conflicts go to an agent (`update-resolve`), and the result is pushed after your approval.
+
+### Changed
+- `check` steps accept `contract: true` (run the locked contract's check) and prompts can use `{{contract}}` (untrusted, prompt-only: the locked files and check).
+- Follow-ups created by `run update` diff and check policy against the merged base, so changes that came from the base are not treated as the branch's own.
+
+### Security
+- Contract files are locked per run: DENY at the diff gate on any content change, and in real time for Claude's file tools. Shell edits by other agents are caught by the hash check at the next diff gate, before anything is committed or pushed.
+- Sentry data is minimised: only the issue title, culprit, counts, first/last seen, release/environment tags and the exception type, message (redacted) and in-app stack frames reach the prompt — never requests, users, breadcrumbs or contexts. The token reaches `curl` on stdin, never in its arguments.
+- Batch approval never covers policy questions; GitHub issue text and Sentry messages are untrusted input and only ever reach prompts.
+
 ## [0.2.0] - 2026-09-25
 
 Guardrails against agents weakening their own checks, token usage for agents in panes, and ADR-driven epics.

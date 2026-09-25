@@ -1,8 +1,13 @@
 # Vision: contract-locked delivery
 
-Status: proposal. Nothing here is implemented yet; everything it needs
-already exists in 0.2.0 (policy engine, diff gate, acceptance criteria,
-epics, variants, audit chain).
+Status: phases 1–2 are implemented in 0.3.0 — the `contract` step with its
+red proof, the lock at the diff gate and in the Claude hook, approval with
+the evidence on screen, amendment by the approver, the receipt in the PR
+body and `receipt verify`, and eval replays of other agents against one
+recorded contract. Still open: ranking variants against one contract inside
+a single task, a mutation check of contracts, and signed audit heads so
+receipts can be verified on other machines. The design below is kept as
+written; see WORKFLOWS.md (`contract-first`) for what shipped.
 
 ## The bottleneck is no longer writing code
 

@@ -103,7 +103,9 @@ pub fn assess(run: &Run) -> Risk {
         bump(RiskLevel::Medium, "the watchdog flagged the agent as stuck".into(), &mut reasons);
     }
     let contract = run.contract.as_ref().filter(|c| c.approval_id.is_some());
-    if contract.is_none() && !reviewed && run.diff_stat.as_ref().is_some_and(|d| d.files_changed > 0) {
+    if run.contract.as_ref().is_some_and(|c| c.approval_id.is_none()) {
+        reasons.push("contract written and proven red; waiting for your approval".into());
+    } else if contract.is_none() && !reviewed && run.diff_stat.as_ref().is_some_and(|d| d.files_changed > 0) {
         bump(RiskLevel::Medium, "nobody reviewed it and no contract holds it".into(), &mut reasons);
     }
     if let Some(c) = contract {
