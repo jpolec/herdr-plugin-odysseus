@@ -5,6 +5,7 @@ pub mod driver;
 pub mod followup;
 pub mod handoff;
 pub mod maintenance;
+pub mod receipt;
 pub mod plan;
 pub mod scheduler;
 mod steps;
@@ -348,6 +349,7 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
             recovered: false,
             selected: false,
             pr_feedback_seen: None,
+            contract: None,
         };
         ctx.store.save_run(&run)?;
         runs.push(run);
@@ -385,7 +387,7 @@ pub fn augment_with_checks(wf: &Workflow, checks: &[String], commands: &[Vec<Str
     for (i, c) in checks.iter().enumerate() {
         new_steps.push(Step {
             id: format!("plan-{c}-{}", i + 1),
-            spec: StepSpec::Check { check: Some((*c).clone()), command: vec![], shell: false, env: Default::default(), cwd: None },
+            spec: StepSpec::Check { check: Some((*c).clone()), command: vec![], shell: false, env: Default::default(), cwd: None, contract: false },
             timeout: None,
             on_failure: on_failure.clone(),
             continue_on_failure: false,
@@ -395,7 +397,7 @@ pub fn augment_with_checks(wf: &Workflow, checks: &[String], commands: &[Vec<Str
     for (i, argv) in commands.iter().enumerate() {
         new_steps.push(Step {
             id: format!("plan-check-{}", i + 1),
-            spec: StepSpec::Check { check: None, command: argv.clone(), shell: false, env: Default::default(), cwd: None },
+            spec: StepSpec::Check { check: None, command: argv.clone(), shell: false, env: Default::default(), cwd: None, contract: false },
             timeout: None,
             on_failure: on_failure.clone(),
             continue_on_failure: false,
@@ -536,6 +538,12 @@ pub fn orchestrator_instructions(run: &Run, step_id: &str, attempt: u32, worktre
  "points": [{"point": "<one statement from the ADR's Decision or Consequences>", "status": "covered" | "partial" | "missing",
              "evidence": "<files, tests or PRs that show it>"}],
  "followups": [<a task object in the same format as a plan task, for each gap; key F1, F2, ...>]}"#
+        }
+        AgentOutput::Contract => {
+            r#"{"files": ["<test files you wrote, relative to the worktree>"],
+ "check": ["<argv of the command that runs exactly these tests>", "..."],
+ "criteria_map": {"1": ["<test name>"], "2": ["..."]},
+ "summary": "<what the tests pin down>"}"#
         }
         AgentOutput::Summary => r#"{"summary": "<what you changed and why>", "status": "done" | "blocked", "notes": "<optional>"}"#,
     };

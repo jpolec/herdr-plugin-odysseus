@@ -388,6 +388,46 @@ pub struct Run {
     /// Fingerprint of the PR feedback last reported (PR watcher).
     #[serde(default)]
     pub pr_feedback_seen: Option<String>,
+    /// The locked contract (tests written before the implementation).
+    #[serde(default)]
+    pub contract: Option<Contract>,
+}
+
+/// Tests that define "done" for a task, proven red on the base, approved by
+/// a human and locked: the implementation may not change them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Contract {
+    /// Worktree-relative path → sha256 of its content when locked.
+    pub files: BTreeMap<String, String>,
+    /// Hash over all files (`path:sha` lines, sorted) — what receipts assert.
+    pub sha256: String,
+    /// The contract's own check (argv); must fail before, pass after.
+    pub check: Vec<String>,
+    /// Acceptance criterion number → test names.
+    #[serde(default)]
+    pub criteria_map: BTreeMap<String, Vec<String>>,
+    /// Commit that introduced the contract.
+    pub commit: Option<String>,
+    /// Output of the failing run on the base (excerpt).
+    pub red_excerpt: String,
+    pub locked_at: Timestamp,
+    #[serde(default)]
+    pub approval_id: Option<String>,
+    #[serde(default)]
+    pub approved_by: Option<String>,
+    #[serde(default)]
+    pub approved_at: Option<Timestamp>,
+}
+
+impl Contract {
+    pub fn combined_hash(files: &BTreeMap<String, String>) -> String {
+        let s: String = files.iter().map(|(p, h)| format!("{p}:{h}\n")).collect();
+        crate::store::sha256_hex(s.as_bytes())
+    }
+    /// Short description for prompts (`{{contract}}`).
+    pub fn describe(&self) -> String {
+        format!("Contract files (locked, do not modify): {}\nContract check: {}", self.files.keys().cloned().collect::<Vec<_>>().join(", "), crate::policies::command::display_argv(&self.check))
+    }
 }
 
 /// "The human approved what the next step is about to do" — valid only for
@@ -808,6 +848,7 @@ mod tests {
             recovered: false,
             selected: false,
             pr_feedback_seen: None,
+            contract: None,
         }
     }
 }

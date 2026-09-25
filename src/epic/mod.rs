@@ -347,6 +347,45 @@ pub fn unmet_feedback(v: &serde_json::Value, criteria: &[String]) -> String {
     s
 }
 
+/// Validate an `output: contract` result: the test files exist inside the
+/// worktree, and (when the task has criteria) every criterion maps to at
+/// least one test.
+pub fn parse_contract(text: &str, criteria: usize, worktree: &Path) -> Result<serde_json::Value> {
+    let v: serde_json::Value = serde_json::from_str(text.trim()).context("contract output is not valid JSON")?;
+    let files = v.get("files").and_then(|f| f.as_array()).context("contract output has no `files` array")?;
+    if files.is_empty() {
+        bail!("contract lists no test files");
+    }
+    if files.len() > 50 {
+        bail!("contract lists {} files; keep it small (at most 50)", files.len());
+    }
+    for f in files {
+        let p = f.as_str().context("`files` must be paths")?;
+        let rel = Path::new(p);
+        if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) || p.starts_with(crate::git::ORCH_DIR) {
+            bail!("contract file {p:?} must be a relative path inside the worktree");
+        }
+        match crate::security::check_containment(worktree, rel)? {
+            crate::security::Containment::Inside(rel) if worktree.join(&rel).is_file() => {}
+            _ => bail!("contract file {p:?} does not exist in the worktree (or escapes it)"),
+        }
+    }
+    if let Some(c) = v.get("check") {
+        let argv: Vec<String> = serde_json::from_value(c.clone()).context("`check` must be an argv array of strings")?;
+        if argv.is_empty() || argv[0].trim().is_empty() || argv.iter().any(|a| a.contains("{{")) {
+            bail!("`check` must be a non-empty argv array without templates");
+        }
+    }
+    if criteria > 0 {
+        let map = v.get("criteria_map").and_then(|m| m.as_object()).context("contract output has no `criteria_map` object")?;
+        let missing: Vec<usize> = (1..=criteria).filter(|i| map.get(&i.to_string()).and_then(|t| t.as_array()).is_none_or(|a| a.is_empty())).collect();
+        if !missing.is_empty() {
+            bail!("acceptance criteria {:?} have no test in `criteria_map`", missing);
+        }
+    }
+    Ok(v)
+}
+
 /// Validate an `output: conformance` result (epic vs. its ADR).
 pub fn parse_conformance(text: &str) -> Result<serde_json::Value> {
     let v: serde_json::Value = serde_json::from_str(text.trim()).context("conformance output is not valid JSON")?;

@@ -91,6 +91,9 @@ pub enum Cmd {
     },
     /// Outcomes per implementing runner and workflow (local data only).
     Stats,
+    /// Contract receipts of contract-first runs.
+    #[command(subcommand)]
+    Receipt(ReceiptCmd),
     /// Token usage per task (agents in panes are read from their own local
     /// session logs; `~` marks estimates).
     Usage {
@@ -189,6 +192,19 @@ pub enum TaskCmd {
     },
     /// Start a task now even though its dependencies are not done.
     Unblock { task: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ReceiptCmd {
+    /// Check that a run's contract is unchanged at a commit and its audit
+    /// chain is intact. Exit 0 when the receipt holds, 1 otherwise.
+    Verify {
+        /// Run reference or PR URL.
+        run: String,
+        /// Commit or branch to check (default: the run's head).
+        #[arg(long)]
+        at: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -577,6 +593,21 @@ pub fn main() -> Result<i32> {
         Cmd::Epic(c) => epic_cmd(&app, c),
         Cmd::Gc { yes, check_prs, failed, days } => gc_cmd(&app, yes, check_prs, failed, days),
         Cmd::Stats => stats_cmd(&app),
+        Cmd::Receipt(ReceiptCmd::Verify { run, at }) => {
+            let ctx = app.ctx(false)?;
+            let r = engine::receipt::verify(&ctx, &run, at.as_deref())?;
+            if app.cli_json {
+                app.print_json(&r)?;
+            } else {
+                println!("{} {}  contract {}  at {}", if r.ok { "OK      " } else { "BROKEN  " }, r.run, &r.contract_sha256[..16.min(r.contract_sha256.len())], &r.at[..12.min(r.at.len())]);
+                println!("approved by {}", r.approved_by.clone().unwrap_or_else(|| "nobody (not approved)".into()));
+                for c in &r.changed {
+                    println!("changed  {c}");
+                }
+                println!("audit    {}", if r.audit_ok { "hash chain intact".to_string() } else { r.audit_problems.join("; ") });
+            }
+            Ok(if r.ok { 0 } else { 1 })
+        }
         Cmd::Plan(p) => plan_cmd(&app, &read_text(&p.text)?, &p.opts),
         Cmd::Doctor(a) => doctor::run(&app, a),
         Cmd::Ui(a) => {

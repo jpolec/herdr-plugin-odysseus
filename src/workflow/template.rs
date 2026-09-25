@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 
 /// Variables whose values come from humans, repositories or agents and must
 /// never reach a command line (argument-injection risk).
-pub const UNTRUSTED_VARS: &[&str] = &["task", "task_title", "previous.output", "feedback", "acceptance"];
+pub const UNTRUSTED_VARS: &[&str] = &["task", "task_title", "previous.output", "feedback", "acceptance", "contract"];
 
 pub const KNOWN_VARS: &[&str] = &[
     "task",
@@ -23,6 +23,7 @@ pub const KNOWN_VARS: &[&str] = &[
     "output_file",
     "step.id",
     "acceptance",
+    "contract",
 ];
 
 pub fn is_untrusted(var: &str) -> bool {

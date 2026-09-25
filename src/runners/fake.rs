@@ -167,6 +167,24 @@ pub fn perform(scenario: &str, cwd: &Path, output_file: &Path, step_id: &str, at
             write(output_file, &v.to_string())?;
             Ok(FakeResult::Done)
         }
+        "contract" | "contract-green" => {
+            write(&cwd.join("tests/contract.txt"), "FIXED must exist\n")?;
+            let check = if scenario == "contract" { serde_json::json!(["test", "-f", "FIXED"]) } else { serde_json::json!(["true"]) };
+            let v = serde_json::json!({"files": ["tests/contract.txt"], "check": check, "criteria_map": {"1": ["fixed_exists"]}, "summary": "fake contract"});
+            write(output_file, &v.to_string())?;
+            Ok(FakeResult::Done)
+        }
+        "fix-contract" => {
+            write(&cwd.join("FIXED"), "yes\n")?;
+            write(output_file, &summary("made the contract pass"))?;
+            Ok(FakeResult::Done)
+        }
+        "contract-tamper" => {
+            write(&cwd.join("tests/contract.txt"), "weakened\n")?;
+            write(&cwd.join("FIXED"), "yes\n")?;
+            write(output_file, &summary("changed the contract"))?;
+            Ok(FakeResult::Done)
+        }
         other => bail!("unknown fake scenario {other}"),
     }
 }

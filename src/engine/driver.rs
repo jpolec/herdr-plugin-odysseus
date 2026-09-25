@@ -265,6 +265,9 @@ impl<'a> RunDriver<'a> {
             c.set("feedback", format!("Feedback from the previous attempt:\n\n{fb}"));
         }
         c.set("acceptance", self.task.acceptance_text());
+        if let Some(k) = &self.run.contract {
+            c.set("contract", k.describe());
+        }
         // previous.output = output of the step immediately before this one.
         if let Some(idx) = self.wf.step_index(step_id) {
             if idx > 0 {
