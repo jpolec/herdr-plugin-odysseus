@@ -149,3 +149,38 @@ fn approver_may_amend_the_contract_and_the_receipt_says_so() {
     assert!(h.events(&r.run_id).contains(&"contract_amended".into()));
     assert!(herdr_orchestrator::engine::receipt::verify(&h.ctx, &r.run_id, None).unwrap().ok);
 }
+
+#[test]
+fn contract_runs_become_eval_cases_replayed_on_other_runners() {
+    let mut h = Harness::new();
+    h.workflow("cf", WF);
+    let t = h.task_with("Make FIXED exist", opts("fake-fix-contract"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    h.decide(&r.run_id, true);
+    let r = h.settle(&t.task_id)[0].clone();
+    assert_eq!(r.status, RunStatus::Succeeded);
+    let case = herdr_orchestrator::eval::record(&h.ctx, &r.run_id).unwrap();
+    assert_eq!(case.case_id, "C1");
+    assert_eq!(case.contract_files["tests/contract.txt"], "FIXED must exist\n");
+    assert!(herdr_orchestrator::eval::record(&h.ctx, &r.run_id).is_err(), "recorded once");
+    // A plain run without a contract cannot be a case.
+    let t2 = h.task("no contract", "quick-task", Some("fake-success"));
+    let r2 = h.settle(&t2.task_id)[0].clone();
+    assert!(format!("{:#}", herdr_orchestrator::eval::record(&h.ctx, &r2.run_id).unwrap_err()).contains("no contract"));
+
+    let ev = herdr_orchestrator::eval::start(&h.ctx, &["C1".into()], &["fake-fix-contract".into(), "fake-success".into(), "fake-contract-tamper".into()]).unwrap();
+    let tid = ev.tasks["C1"].clone();
+    let runs = h.settle(&tid);
+    assert_eq!(runs.len(), 3);
+    for r in &runs {
+        let c = r.contract.clone().expect("seeded contract");
+        assert_eq!(c.sha256, case.contract_sha256, "same oracle for every runner");
+        assert_eq!(r.git.base_sha.as_deref(), Some(case.base_sha.as_str()));
+    }
+    let rows = herdr_orchestrator::eval::report(&h.ctx, &ev.eval_id).unwrap();
+    let row = |n: &str| rows.iter().find(|r| r.runner == n).unwrap().clone();
+    assert_eq!(row("fake-fix-contract").passed, 1);
+    assert_eq!(row("fake-success").failed, 1, "never satisfies the contract");
+    assert_eq!(row("fake-contract-tamper").failed, 1, "cannot cheat by editing the contract");
+    assert_eq!(rows[0].runner, "fake-fix-contract", "best first");
+}

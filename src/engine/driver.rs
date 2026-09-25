@@ -510,6 +510,11 @@ impl<'a> RunDriver<'a> {
         } else {
             crate::git::add_worktree(&repo, &path, &branch, &base_sha)?
         };
+        if let (Some(case), None, crate::git::WorktreeOutcome::Created) = (self.task.options.eval_case.clone(), &self.run.contract, &outcome) {
+            let c = crate::eval::seed_contract(self.ctx, &case, &path)?;
+            self.audit("contract_locked", Actor::orchestrator(), None, serde_json::json!({"sha256": c.sha256, "files": c.files, "check": c.check, "eval_case": case}));
+            self.run.contract = Some(c);
+        }
         self.run.git.head_sha = crate::git::head_sha(&path).ok();
         self.run.git.dirty = Some(false);
         self.save()?;

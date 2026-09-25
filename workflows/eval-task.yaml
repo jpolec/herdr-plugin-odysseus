@@ -1,0 +1,42 @@
+# eval-task: replay of an eval case (used by `eval run`).
+#
+#   the case's contract is already committed and locked
+#   → implement → contract check green (retry ×2) → full tests
+#
+# No approvals, no PR: the result is a score, not a change to ship.
+version: 1
+name: eval-task
+description: Replay an eval case against its locked contract (used by `eval run`).
+defaults:
+  timeout: 45m
+
+steps:
+  - id: implement
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      Make the contract pass. The contract files are locked: any change to
+      them is refused.
+      {{contract}}
+
+      {{feedback}}
+
+  - id: contract-green
+    type: check
+    contract: true
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 1
+      feedback: true

@@ -281,9 +281,6 @@ impl Workflow {
                     if check.is_some() || !command.is_empty() {
                         bail!("{}: `contract: true` runs the locked contract's own check; drop `check:`/`command:`", ctx());
                     }
-                    if !self.steps[..i].iter().any(|s| matches!(s.spec, StepSpec::Agent { output: AgentOutput::Contract, .. })) {
-                        bail!("{}: `contract: true` needs an earlier agent step with `output: contract`", ctx());
-                    }
                 }
                 StepSpec::Check { check: Some(name), command, .. } => {
                     if !command.is_empty() {
