@@ -158,11 +158,21 @@ pub fn fake_gh(dir: &Path) -> PathBuf {
         format!(
             "#!/bin/sh\necho \"$@\" >> {log}\ncase \"$1 $2\" in\n  'pr list') if [ -f {state} ]; then cat {state}; else echo '[]'; fi;;\n  'pr create') echo '[{{\"number\":7,\"url\":\"https://github.com/o/r/pull/7\",\"state\":\"OPEN\",\"isDraft\":true}}]' > {state}; echo 'https://github.com/o/r/pull/7';;\n  'pr view') if [ -f {view} ]; then cat {view}; else echo '{{\"state\":\"OPEN\"}}'; fi;;
   'api repos/o/r/pulls/7/comments') if [ -f {inline} ]; then cat {inline}; else echo '[]'; fi;;
+  'repo view') echo 'o/r';;
+  'api repos/o/r/milestones?'*) echo '[]';;
+  'api repos/o/r/milestones') echo '{{\"number\":1}}';;
+  'label create') ;;
+  'issue create') n=$(( $(cat {counter} 2>/dev/null || echo 10) + 1 )); echo $n > {counter}; echo https://github.com/o/r/issues/$n;;
+  'issue comment') ;;
+  'issue list') if [ -f {issues} ]; then cat {issues}; else echo '[]'; fi;;
+  'project item-add') echo 'error: your token has not been granted the required scopes' >&2; exit 1;;
   '--version ') echo 'gh version 2.0.0';;\n  *) exit 1;;\nesac\n",
             log = dir.join("gh.log").display(),
             state = dir.join("gh-prs.json").display(),
             view = dir.join("gh-view.json").display(),
-            inline = dir.join("gh-inline.json").display()
+            inline = dir.join("gh-inline.json").display(),
+            counter = dir.join("gh-issue-counter").display(),
+            issues = dir.join("gh-issues.json").display()
         ),
     )
     .unwrap();

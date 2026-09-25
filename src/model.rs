@@ -265,6 +265,12 @@ pub struct Task {
     /// Why a queued task has not started yet (unmet dependencies).
     #[serde(default)]
     pub waiting_on: Option<String>,
+    /// The GitHub issue that tracks this task.
+    #[serde(default)]
+    pub issue: Option<crate::github::IssueLink>,
+    /// Last status reported on the issue (so each change is posted once).
+    #[serde(default)]
+    pub issue_synced: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

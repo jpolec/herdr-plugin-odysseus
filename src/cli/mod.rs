@@ -104,6 +104,9 @@ pub enum Cmd {
         #[arg(long, short)]
         runner: Option<String>,
     },
+    /// GitHub issues, milestones and Projects for epics and tasks.
+    #[command(subcommand)]
+    Tracker(TrackerCmd),
     /// Everything that needs you, most urgent first, with risk and reasons.
     Inbox {
         /// How far back finished work is listed (default 24h).
@@ -217,6 +220,24 @@ pub enum TaskCmd {
     },
     /// Start a task now even though its dependencies are not done.
     Unblock { task: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TrackerCmd {
+    /// Create issues (and a milestone per epic) for accepted epic tasks and
+    /// post status changes as comments.
+    Sync,
+    /// Queue tasks from open issues with the agent-ready label.
+    Import {
+        /// Label (default: github.tracker.import_label).
+        #[arg(long)]
+        label: Option<String>,
+        #[command(flatten)]
+        opts: TaskOpts,
+        /// Create the tasks (default: only list).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -665,6 +686,7 @@ pub fn main() -> Result<i32> {
         Cmd::Stats => stats_cmd(&app),
         Cmd::Eval(c) => eval_cmd(&app, c),
         Cmd::Inbox { since } => inbox_cmd(&app, &since),
+        Cmd::Tracker(c) => tracker_cmd(&app, c),
         Cmd::Learn { all, list, runner } => {
             let ctx = app.ctx(false)?;
             let repo = app.repo()?;
@@ -1650,6 +1672,47 @@ pub(crate) fn inbox_lines(ctx: &EngineCtx, since: &str) -> Result<Vec<String>> {
         out.push(format!("\n{low} low-risk \"ship it?\" approval(s): herdr-orchestrator approval batch --max-risk low"));
     }
     Ok(out)
+}
+
+fn tracker_cmd(app: &App, c: TrackerCmd) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let repo = app.repo()?;
+    match c {
+        TrackerCmd::Sync => {
+            let r = engine::tracker::sync(&ctx, &repo)?;
+            if app.cli_json {
+                return app.print_json(&r).map(|_| 0);
+            }
+            for u in &r.issues_created {
+                println!("created {u}");
+            }
+            println!("{} issue(s) created, {} status comment(s), {} added to the project", r.issues_created.len(), r.comments, r.project_items);
+            for e in &r.errors {
+                println!("warning: {e}");
+            }
+            Ok(if r.errors.is_empty() { 0 } else { 1 })
+        }
+        TrackerCmd::Import { label, opts, yes } => {
+            let cfg = ctx.load_config(Some(&repo))?;
+            let label = label.unwrap_or(cfg.config.github.tracker.import_label.clone());
+            let issues = engine::tracker::importable(&ctx, &repo, &label)?;
+            if issues.is_empty() {
+                println!("no open issues labelled {label:?} that are not tasks yet");
+                return Ok(0);
+            }
+            for i in &issues {
+                println!("#{:<5} {}", i.number, i.title);
+            }
+            if !yes {
+                println!("\n{} issue(s). Add --yes to queue them as tasks.", issues.len());
+                return Ok(0);
+            }
+            let tasks = engine::tracker::import(&ctx, &repo, &issues, task_options(&opts, false))?;
+            println!("queued {} task(s)", tasks.len());
+            app.ensure_daemon()?;
+            Ok(0)
+        }
+    }
 }
 
 fn shift_cmd(app: &App, c: ShiftCmd) -> Result<i32> {

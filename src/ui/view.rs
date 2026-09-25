@@ -488,6 +488,8 @@ mod tests {
             acceptance: vec![],
             manual_checks: vec![],
             waiting_on: None,
+            issue: None,
+            issue_synced: None,
         };
         let mut run: Run = serde_json::from_value(serde_json::json!({
             "run_id": "run-a", "task_id": "124", "variant_index": 0, "variant_count": 1,

@@ -204,11 +204,32 @@ pub struct GithubConfig {
     /// and review comments and notify (never starts anything by itself).
     pub watch_prs: bool,
     pub watch_interval: HumanDuration,
+    /// Issues, milestones and a Projects board for epics and tasks.
+    pub tracker: TrackerConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct TrackerConfig {
+    /// Sync automatically while the engine runs (otherwise `tracker sync`).
+    pub auto_sync: bool,
+    /// Label put on issues the orchestrator creates.
+    pub label: String,
+    /// Label that marks issues ready for agents (`tracker import`).
+    pub import_label: String,
+    /// Projects (v2) board as `owner/number`, e.g. `jpolec/3`.
+    pub project: Option<String>,
+}
+
+impl Default for TrackerConfig {
+    fn default() -> Self {
+        Self { auto_sync: false, label: "herdr-orchestrator".into(), import_label: "agent-ready".into(), project: None }
+    }
 }
 
 impl Default for GithubConfig {
     fn default() -> Self {
-        Self { draft_pr: true, auto_merge: false, base: None, push_before_pr: true, watch_prs: false, watch_interval: HumanDuration::from_secs(10 * 60) }
+        Self { draft_pr: true, auto_merge: false, base: None, push_before_pr: true, watch_prs: false, watch_interval: HumanDuration::from_secs(10 * 60), tracker: Default::default() }
     }
 }
 
