@@ -37,16 +37,58 @@ pub struct PaneRunner {
     interrupt_on_timeout: bool,
     read_lines: u32,
     settle_window: Duration,
+    watchdog: super::watchdog::WatchdogConfig,
+}
+
+/// Watchdog state for one step execution.
+struct Watch {
+    dog: super::watchdog::Watchdog,
+    next: Instant,
+    started: chrono::DateTime<chrono::Utc>,
 }
 
 impl PaneRunner {
     pub fn new(name: &str, herdr: Arc<dyn HerdrApi>, interrupt_on_timeout: bool, read_lines: u32) -> Self {
-        Self { name: name.to_string(), herdr, interrupt_on_timeout, read_lines, settle_window: Duration::from_secs(30) }
+        Self { name: name.to_string(), herdr, interrupt_on_timeout, read_lines, settle_window: Duration::from_secs(30), watchdog: super::watchdog::WatchdogConfig { enabled: false, ..Default::default() } }
     }
 
     pub fn with_settle_window(mut self, d: Duration) -> Self {
         self.settle_window = d;
         self
+    }
+
+    pub fn with_watchdog(mut self, cfg: super::watchdog::WatchdogConfig) -> Self {
+        self.watchdog = cfg;
+        self
+    }
+
+    fn new_watch(&self) -> Option<Watch> {
+        let dog = super::watchdog::Watchdog::new(self.watchdog.clone());
+        dog.enabled().then(|| Watch { next: Instant::now() + dog.check_every(), dog, started: chrono::Utc::now() })
+    }
+
+    /// Observe the agent if a check is due; emit `Stuck` / `Progressing`.
+    fn watch(&self, w: &mut Option<Watch>, req: &AgentRequest, b: &AgentBinding, events: &mut dyn FnMut(AgentEvent)) {
+        let Some(w) = w.as_mut() else { return };
+        let now = Instant::now();
+        if now < w.next {
+            return;
+        }
+        w.next = now + w.dog.check_every();
+        let tail = self.transcript(b);
+        let tail: String = tail.lines().rev().take(60).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+        let tokens = b
+            .agent_kind
+            .as_deref()
+            .and_then(|k| crate::telemetry::sessions::pane_usage(k, b.agent_session.as_deref(), &req.worktree, w.started, chrono::Utc::now()))
+            .and_then(|u| Some(u.input_tokens? + u.output_tokens.unwrap_or(0)));
+        let was = w.dog.fired();
+        let obs = super::watchdog::Observation { at: now, tail, worktree: crate::git::worktree_fingerprint(&req.worktree), tokens };
+        if let Some(reason) = w.dog.observe(&obs) {
+            events(AgentEvent::Stuck(reason));
+        } else if was && !w.dog.fired() {
+            events(AgentEvent::Progressing);
+        }
     }
 
     fn label(req: &AgentRequest) -> String {
@@ -169,6 +211,7 @@ impl PaneRunner {
         deadline: Instant,
         cancel: &CancelToken,
         events: &mut dyn FnMut(AgentEvent),
+        watch: &mut Option<Watch>,
     ) -> Result<AgentOutcome> {
         let target = Self::target(b)?;
         let mut blocked = false;
@@ -184,7 +227,10 @@ impl PaneRunner {
                 }
                 return Ok(self.outcome(req, b, AgentEnd::TimedOut));
             }
-            let chunk = CHUNK.min(deadline - now);
+            let mut chunk = CHUNK.min(deadline - now);
+            if let Some(w) = watch.as_ref() {
+                chunk = chunk.min(w.dog.check_every());
+            }
             let r = if blocked {
                 self.herdr.wait_agent(&target, NOT_BLOCKED, chunk)
             } else {
@@ -205,6 +251,7 @@ impl PaneRunner {
                             blocked = false;
                             events(AgentEvent::Unblocked);
                         }
+                        AgentStatus::Working => self.watch(watch, req, b, events),
                         s if s.is_settled() => {
                             if blocked {
                                 events(AgentEvent::Unblocked);
@@ -214,7 +261,12 @@ impl PaneRunner {
                         _ => {}
                     }
                 }
-                Err(e) if e.is_wait_timeout() => continue,
+                Err(e) if e.is_wait_timeout() => {
+                    if !blocked {
+                        self.watch(watch, req, b, events);
+                    }
+                    continue;
+                }
                 Err(e) if e.is_not_found() || e.code() == Some("agent_not_found") => {
                     return Ok(self.outcome(req, b, AgentEnd::Lost(self.lost_reason(b))));
                 }
@@ -452,8 +504,9 @@ impl PaneRunner {
         events: &mut dyn FnMut(AgentEvent),
     ) -> Result<AgentOutcome> {
         let target = Self::target(b)?;
+        let mut watch = self.new_watch();
         loop {
-            let out = self.wait_settled(req, b, deadline, cancel, events)?;
+            let out = self.wait_settled(req, b, deadline, cancel, events, &mut watch)?;
             if out.end != AgentEnd::Completed || out.output_file_text.is_some() {
                 return Ok(out);
             }

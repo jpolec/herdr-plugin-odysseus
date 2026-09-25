@@ -122,10 +122,11 @@ fn dashboard(f: &mut Frame, area: Rect, s: &State) {
             }
             lines.push(Line::from(head));
             if let Some(w) = s.waiting_step(r) {
-                lines.push(Line::from(vec![
-                    Span::raw("        "),
-                    Span::styled(format!("! {} · {} is asking you something — press enter to see and answer", w.step_id, w.runner.clone().unwrap_or_default()), Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                ]));
+                let msg = match &w.attention {
+                    Some(why) => format!("! {} · {} looks stuck: {why} — enter to look, [x] to cancel", w.step_id, w.runner.clone().unwrap_or_default()),
+                    None => format!("! {} · {} is asking you something — press enter to see and answer", w.step_id, w.runner.clone().unwrap_or_default()),
+                };
+                lines.push(Line::from(vec![Span::raw("        "), Span::styled(msg, Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD))]));
             }
             if expand {
                 let wf = crate::workflow::Workflow::parse(&r.workflow_yaml).ok();

@@ -307,6 +307,8 @@ pub struct GuardConfig {
     pub test_only_retry: bool,
     /// Globs that count as tests or test/check configuration.
     pub test_paths: Vec<String>,
+    /// Notice pane agents that are busy without making progress.
+    pub watchdog: crate::runners::watchdog::WatchdogConfig,
 }
 
 impl Default for GuardConfig {
@@ -338,6 +340,7 @@ impl Default for GuardConfig {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            watchdog: Default::default(),
         }
     }
 }

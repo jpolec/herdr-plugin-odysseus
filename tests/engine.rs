@@ -277,7 +277,7 @@ fn parallel_runs_respect_limit() {
         max_seen = max_seen.max(h.sched.active.len());
         tasks.iter().all(|t| h.ctx.store.load_task(&t.task_id).unwrap().status == TaskStatus::Succeeded)
     });
-    assert!(ok);
+    assert!(ok, "{:#?}", h.ctx.store.list_runs().unwrap().iter().map(|r| (r.display_name(), r.status, r.status_reason.clone())).collect::<Vec<_>>());
     assert!(max_seen <= 2, "saw {max_seen} concurrent runs");
     assert!(max_seen >= 1);
     let branches: std::collections::BTreeSet<_> = h.ctx.store.list_runs().unwrap().into_iter().map(|r| r.git.branch.unwrap()).collect();
@@ -1056,4 +1056,25 @@ fn gc_removes_only_clean_merged_worktrees_and_stats_summarize() {
     let s = stats.iter().find(|s| s.runner == "fake-success").unwrap();
     assert_eq!((s.runs, s.succeeded, s.avg_tokens), (2, 2, Some(1200)));
     assert_eq!(stats.iter().find(|s| s.runner == "fake-fail").unwrap().failed, 1);
+}
+
+#[test]
+fn watchdog_hands_a_stuck_agent_to_a_human() {
+    let mock = Arc::new(MockHerdr::new(Arc::new(|_c: &herdr_orchestrator::herdr::mock::PromptCall| MockReaction::Hang)));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.project_file("config.yaml", "guard:\n  claude_hook: false\n  watchdog:\n    check_every: 1s\n    stall_after: 3s\n    idle_after: 2s\n");
+    let t = h.task("Spin forever", "quick-task", Some("claude"));
+    let tid = t.task_id.clone();
+    let ok = h.until(Duration::from_secs(40), |h| h.runs_of(&tid).first().is_some_and(|r| r.steps.iter().any(|e| e.attention.is_some()) && h.events(&r.run_id).contains(&"agent_stuck".into())));
+    assert!(ok, "watchdog did not fire: {:?}", h.runs_of(&tid).first().map(|r| r.steps.clone()));
+    let r = h.runs_of(&tid)[0].clone();
+    let e = r.steps.iter().find(|e| e.attention.is_some()).unwrap();
+    assert_eq!(e.status, StepStatus::AwaitingHuman);
+    assert!(e.attention.as_deref().unwrap().contains("no file changes"), "{:?}", e.attention);
+    assert!(h.events(&r.run_id).contains(&"agent_stuck".into()));
+    assert!(h.until(Duration::from_secs(5), |_| mock.notifications().iter().any(|(t, _)| t.contains("looks stuck"))));
+    // Never failed by the watchdog: a human decides.
+    assert!(!r.status.is_terminal());
+    herdr_orchestrator::engine::request_cancel(&h.ctx, &r.run_id, "test", None).unwrap();
+    assert_eq!(h.settle(&tid)[0].status, RunStatus::Cancelled);
 }

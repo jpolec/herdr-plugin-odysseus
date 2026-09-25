@@ -368,6 +368,21 @@ pub fn added_lines(worktree: &Path, base_sha: &str, f: &ChangedFile, max_lines: 
     out.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).take(max_lines).map(|l| clip(&l[1..])).collect()
 }
 
+/// Cheap fingerprint that changes when the worktree's content changes:
+/// HEAD, per-file line counts of uncommitted changes, untracked files.
+pub fn worktree_fingerprint(worktree: &Path) -> String {
+    let exclude = format!(":(exclude){ORCH_DIR}");
+    let head = git(worktree, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let num = git(worktree, &["diff", "HEAD", "--numstat", "--", ".", &exclude]).unwrap_or_default();
+    let untracked = git(worktree, &["ls-files", "--others", "--exclude-standard", "-z", "--", ".", &exclude]).unwrap_or_default();
+    let sizes: String = untracked
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("{p}:{}\n", std::fs::metadata(worktree.join(p)).map(|m| m.len()).unwrap_or(0)))
+        .collect();
+    crate::store::sha256_hex(format!("{head}\n{num}\n{sizes}").as_bytes())
+}
+
 /// `true` when `commit` is reachable from `rev` (it has been merged into it).
 pub fn is_ancestor(repo: &Path, commit: &str, rev: &str) -> bool {
     git(repo, &["merge-base", "--is-ancestor", commit, rev]).is_ok()
