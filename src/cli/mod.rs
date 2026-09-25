@@ -91,6 +91,9 @@ pub enum Cmd {
     },
     /// Outcomes per implementing runner and workflow (local data only).
     Stats,
+    /// Your repository's own benchmark: replay recorded tasks on other agents.
+    #[command(subcommand)]
+    Eval(EvalCmd),
     /// Contract receipts of contract-first runs.
     #[command(subcommand)]
     Receipt(ReceiptCmd),
@@ -192,6 +195,29 @@ pub enum TaskCmd {
     },
     /// Start a task now even though its dependencies are not done.
     Unblock { task: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EvalCmd {
+    /// Record a succeeded contract-first run as an eval case.
+    Record { run: String },
+    /// List eval cases and replays.
+    List,
+    /// Replay cases on runners (estimates cost; spends tokens only with --yes).
+    Run {
+        /// Case ids, comma separated (default: the last --last cases).
+        #[arg(long, value_delimiter = ',')]
+        cases: Option<Vec<String>>,
+        #[arg(long, default_value_t = 5)]
+        last: usize,
+        /// Runners to compare, comma separated: `claude,codex,gemini`.
+        #[arg(long, value_delimiter = ',', required = true)]
+        runners: Vec<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Results per runner (default: the latest replay).
+    Report { eval: Option<String> },
 }
 
 #[derive(Subcommand, Debug)]
@@ -593,6 +619,7 @@ pub fn main() -> Result<i32> {
         Cmd::Epic(c) => epic_cmd(&app, c),
         Cmd::Gc { yes, check_prs, failed, days } => gc_cmd(&app, yes, check_prs, failed, days),
         Cmd::Stats => stats_cmd(&app),
+        Cmd::Eval(c) => eval_cmd(&app, c),
         Cmd::Receipt(ReceiptCmd::Verify { run, at }) => {
             let ctx = app.ctx(false)?;
             let r = engine::receipt::verify(&ctx, &run, at.as_deref())?;
@@ -1489,6 +1516,76 @@ fn epic_cmd(app: &App, c: EpicCmd) -> Result<i32> {
             let e = crate::epic::engine::verify(&ctx, &epic, "cli")?;
             println!("epic {}: conformance review queued (task #{})", e.epic_id, e.conformance_task.clone().unwrap_or_default());
             app.ensure_daemon()?;
+        }
+    }
+    Ok(0)
+}
+
+fn eval_cmd(app: &App, c: EvalCmd) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    match c {
+        EvalCmd::Record { run } => {
+            let case = crate::eval::record(&ctx, &run)?;
+            println!("recorded case {} — {} (contract {})", case.case_id, case.title, &case.contract_sha256[..16]);
+        }
+        EvalCmd::List => {
+            let cases = crate::eval::list_cases(&ctx)?;
+            if cases.is_empty() {
+                println!("no eval cases — record a succeeded contract-first run with: herdr-orchestrator eval record <run>");
+            }
+            for c in &cases {
+                println!("{:<5} {:<12} {:<14} {}", c.case_id, &c.base_sha[..12.min(c.base_sha.len())], c.source_runner.clone().unwrap_or_default(), c.title);
+            }
+            for r in crate::eval::list_runs(&ctx)? {
+                println!("{:<5} replay of {} on {}", r.eval_id, r.tasks.keys().cloned().collect::<Vec<_>>().join(","), r.runners.join(","));
+            }
+        }
+        EvalCmd::Run { cases, last, runners, yes } => {
+            let all = crate::eval::list_cases(&ctx)?;
+            let ids: Vec<String> = match cases {
+                Some(c) => c,
+                None => all.iter().rev().take(last).rev().map(|c| c.case_id.clone()).collect(),
+            };
+            if ids.is_empty() {
+                bail!("no eval cases yet — record some with `eval record <run>`");
+            }
+            println!("{} case(s) × {} runner(s) = {} agent runs, each held to its case's locked contract", ids.len(), runners.len(), ids.len() * runners.len());
+            for (r, est) in crate::eval::estimate(&ctx, &runners, ids.len())? {
+                println!("  {r:<16} {}", est.map(|t| format!("~{} tokens (from your history)", t)).unwrap_or_else(|| "no history — cost unknown".into()));
+            }
+            if !yes {
+                println!("
+Nothing started. Add --yes to run it (agents spend real tokens).");
+                return Ok(0);
+            }
+            let ev = crate::eval::start(&ctx, &ids, &runners)?;
+            println!("replay {} queued: {} task(s); results: herdr-orchestrator eval report {}", ev.eval_id, ev.tasks.len(), ev.eval_id);
+            app.ensure_daemon()?;
+        }
+        EvalCmd::Report { eval } => {
+            let id = match eval {
+                Some(e) => e,
+                None => crate::eval::list_runs(&ctx)?.last().map(|r| r.eval_id.clone()).context("no replays yet")?,
+            };
+            let rows = crate::eval::report(&ctx, &id)?;
+            if app.cli_json {
+                return app.print_json(&rows).map(|_| 0);
+            }
+            println!("Replay {id}: passed = locked contract and full tests green\n");
+            println!("{:<16} {:>6} {:>7} {:>7} {:>10} {:>9} {:>9} {:>8}", "RUNNER", "CASES", "PASSED", "FAILED", "UNFINISHED", "ATTEMPTS", "TOKENS", "MINUTES");
+            for r in rows {
+                println!(
+                    "{:<16} {:>6} {:>7} {:>7} {:>10} {:>9.1} {:>9} {:>8}",
+                    r.runner,
+                    r.cases,
+                    r.passed,
+                    r.failed,
+                    r.unfinished,
+                    r.avg_attempts,
+                    r.avg_tokens.map(|t| t.to_string()).unwrap_or_else(|| "–".into()),
+                    r.avg_minutes.map(|m| format!("{m:.1}")).unwrap_or_else(|| "-".into())
+                );
+            }
         }
     }
     Ok(0)

@@ -18,6 +18,7 @@ pub const BUILTIN_WORKFLOWS: &[(&str, &str)] = &[
     ("variant-review", include_str!("../../workflows/variant-review.yaml")),
     ("dual-review", include_str!("../../workflows/dual-review.yaml")),
     ("contract-first", include_str!("../../workflows/contract-first.yaml")),
+    ("eval-task", include_str!("../../workflows/eval-task.yaml")),
     ("epic-task", include_str!("../../workflows/epic-task.yaml")),
     ("epic-plan", include_str!("../../workflows/epic-plan.yaml")),
     ("epic-conformance", include_str!("../../workflows/epic-conformance.yaml")),

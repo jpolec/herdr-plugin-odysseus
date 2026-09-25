@@ -203,6 +203,9 @@ pub struct TaskOptions {
     /// from the base (PR follow-ups).
     #[serde(default)]
     pub continue_run: Option<String>,
+    /// Replay of an eval case: its contract is seeded and locked.
+    #[serde(default)]
+    pub eval_case: Option<String>,
 }
 
 fn one() -> u32 {
@@ -223,6 +226,7 @@ impl Default for TaskOptions {
             extra_checks: vec![],
             extra_commands: vec![],
             continue_run: None,
+            eval_case: None,
         }
     }
 }
@@ -286,6 +290,8 @@ pub enum TaskSource {
     Epic { epic_id: String, adr_path: String, adr_sha256: String, purpose: String },
     /// Follow-up on review comments / failing CI of an existing PR.
     PrFeedback { run_id: String, pr_url: String },
+    /// Replay of an eval case.
+    Eval { eval_id: String, case_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

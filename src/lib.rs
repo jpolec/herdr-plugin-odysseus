@@ -21,6 +21,7 @@ pub mod runners;
 pub mod daemon;
 pub mod engine;
 pub mod epic;
+pub mod eval;
 pub mod recovery;
 pub mod telemetry;
 pub mod cli;
