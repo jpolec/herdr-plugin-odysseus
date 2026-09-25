@@ -1106,3 +1106,26 @@ fn run_state_is_shown_in_the_herdr_sidebar() {
     h.settle(&t2.task_id);
     assert_eq!(mock.workspace_tokens().len(), before);
 }
+
+#[test]
+fn runner_presets_set_model_effort_and_advisor() {
+    let mock = Arc::new(MockHerdr::new(pane_behavior("success")));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.project_file(
+        "config.yaml",
+        "herdr:\n  close_panes_on_success: false\nguard:\n  claude_hook: false\nrunners:\n  claude-deep:\n    advisor: fable\n",
+    );
+    let fast = h.task("Fast", "quick-task", Some("claude-fast"));
+    assert_eq!(h.settle(&fast.task_id)[0].status, RunStatus::Succeeded);
+    let deep = h.task("Deep", "quick-task", Some("claude-deep"));
+    assert_eq!(h.settle(&deep.task_id)[0].status, RunStatus::Succeeded);
+    let panes = mock.panes();
+    let agent = |label: &str| panes.iter().find(|p| p.label.as_deref().is_some_and(|l| l.contains(label))).unwrap().clone();
+    let f = agent("claude-fast");
+    assert_eq!(f.agent.as_ref().unwrap().kind, "claude");
+    assert_eq!(f.agent.as_ref().unwrap().args, vec!["--permission-mode", "acceptEdits", "--model", "sonnet", "--effort", "medium"]);
+    assert_eq!(f.env.get("CLAUDE_CODE_DISABLE_ADVISOR_TOOL").map(String::as_str), Some("1"), "advisor off for the fast preset");
+    let d = agent("claude-deep");
+    assert!(d.agent.as_ref().unwrap().args.ends_with(&["--advisor".to_string(), "fable".to_string()]), "config overrides the preset's advisor: {:?}", d.agent);
+    assert!(!d.env.contains_key("CLAUDE_CODE_DISABLE_ADVISOR_TOOL"));
+}

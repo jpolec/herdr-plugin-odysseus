@@ -42,6 +42,8 @@ pub struct MockPane {
     pub label: Option<String>,
     pub agent: Option<MockAgent>,
     pub metadata_title: Option<String>,
+    /// Environment the tab was created with.
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +172,7 @@ impl MockHerdr {
                 label: label.map(String::from),
                 agent: None,
                 metadata_title: None,
+                env: BTreeMap::new(),
             },
         );
         pane_id
@@ -260,9 +263,12 @@ impl HerdrApi for MockHerdr {
         st.panes.retain(|_, p| p.workspace_id != workspace_id);
         Ok(())
     }
-    fn create_tab(&self, workspace_id: &str, cwd: &Path, label: &str, _env: &BTreeMap<String, String>) -> HResult<TabHandle> {
+    fn create_tab(&self, workspace_id: &str, cwd: &Path, label: &str, env: &BTreeMap<String, String>) -> HResult<TabHandle> {
         let mut st = self.check(format!("tab.create {label}"))?;
         let pane = Self::new_pane(&mut st, workspace_id, cwd, Some(label));
+        if let Some(p) = st.panes.get_mut(&pane) {
+            p.env = env.clone();
+        }
         let tab = st.panes[&pane].tab_id.clone();
         Ok(TabHandle { tab_id: tab, pane_id: pane })
     }

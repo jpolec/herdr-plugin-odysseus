@@ -188,7 +188,10 @@ impl<'a> RunDriver<'a> {
         let log_path = self.ctx.store.layout.run_logs_dir(&self.run.run_id).join(format!("{exec_id}.log"));
         let mut env = self.cfg.config.environment.clone();
         env.inherit.extend(profile.env_inherit.iter().cloned());
-        let child_env = env.build(std::env::vars(), &self.orch_env(&step.id));
+        // The runner's own environment (e.g. advisor off) on top of ours.
+        let mut agent_env = self.orch_env(&step.id);
+        agent_env.extend(profile.env.clone());
+        let child_env = env.build(std::env::vars(), &agent_env);
         let timeout = self.step_timeout(step, self.cfg.config.limits.agent_timeout.as_duration());
         let req = AgentRequest {
             run_id: self.run.run_id.clone(),
@@ -210,7 +213,7 @@ impl<'a> RunDriver<'a> {
             startup_timeout: self.cfg.config.limits.agent_startup_timeout.as_duration(),
             env: child_env,
             previous: previous.clone(),
-            pane_env: self.orch_env(&step.id),
+            pane_env: agent_env.clone(),
         };
         {
             let e = self.exec_mut(&exec_id);

@@ -456,6 +456,15 @@ pub struct RunnerProfileConfig {
     pub command: Option<Vec<String>>,
     /// Extra env var names this runner may inherit (e.g. `ANTHROPIC_API_KEY`).
     pub env_inherit: Option<Vec<String>>,
+    /// Model for the agent (`opus`, `sonnet`, a full model id; Codex/Gemini
+    /// model names). Translated to the agent's own flag.
+    pub model: Option<String>,
+    /// Reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`).
+    pub effort: Option<String>,
+    /// Claude only: advisor model (`fable`, `opus`, `sonnet`, a model id) or
+    /// `off` (disables the advisor for this runner regardless of the user's
+    /// Claude settings). Unset = the user's Claude settings decide.
+    pub advisor: Option<String>,
 }
 
 // ---------------------------------------------------------------- paths --

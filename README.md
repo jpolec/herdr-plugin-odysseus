@@ -228,6 +228,20 @@ herdr-orchestrator note add "NAV currency is canonical" --scope 'src/fx/**'
 herdr-orchestrator eval run --runners claude --arms history,no-history --yes   # does it help?
 ```
 
+### Pick the model per step
+
+Runners take `model`, `effort` and `advisor`. Presets: `claude-deep` (plans,
+contracts: opus, xhigh, with advisor) and `claude-fast` (small steps: sonnet,
+medium, no advisor). Define your own in the config and compare them with
+`eval run --runners claude-deep,claude-fast`:
+
+```yaml
+runners:
+  claude-deep: { advisor: fable }          # tweak a preset
+  claude:      { effort: high, advisor: off }
+  review-codex: { kind: codex, effort: high }
+```
+
 ### See what needs you in Herdr's sidebar
 
 Each run's workspace shows its state as a sidebar token — `⏳ approve: contract`,
