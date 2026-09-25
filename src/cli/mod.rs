@@ -110,6 +110,19 @@ pub enum Cmd {
     /// Production errors from Sentry → reproduce-first fix tasks.
     #[command(subcommand)]
     Incidents(IncidentsCmd),
+    /// What an agent would be told about earlier work in this repository.
+    History {
+        /// Show the section a task's agent gets.
+        #[arg(long)]
+        task: Option<String>,
+        /// Or search the history with free text (paths count extra).
+        query: Vec<String>,
+        #[arg(long, default_value_t = 8)]
+        k: usize,
+    },
+    /// Notes for agents working in this repository.
+    #[command(subcommand)]
+    Note(NoteCmd),
     /// Everything that needs you, most urgent first, with risk and reasons.
     Inbox {
         /// How far back finished work is listed (default 24h).
@@ -226,6 +239,19 @@ pub enum TaskCmd {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum NoteCmd {
+    /// Add a note agents will see when their work touches the scope.
+    Add {
+        text: Vec<String>,
+        /// Globs the note is about (repeatable; default: whole repository).
+        #[arg(long)]
+        scope: Vec<String>,
+    },
+    List,
+    Rm { id: String },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum TrackerCmd {
     /// Create issues (and a milestone per epic) for accepted epic tasks and
     /// post status changes as comments.
@@ -295,6 +321,10 @@ pub enum EvalCmd {
         /// Runners to compare, comma separated: `claude,codex,gemini`.
         #[arg(long, value_delimiter = ',', required = true)]
         runners: Vec<String>,
+        /// Also compare project memory: `history,no-history` (every runner
+        /// runs every case once per arm).
+        #[arg(long, value_delimiter = ',')]
+        arms: Vec<String>,
         #[arg(long)]
         yes: bool,
     },
@@ -720,6 +750,8 @@ pub fn main() -> Result<i32> {
         Cmd::Eval(c) => eval_cmd(&app, c),
         Cmd::Inbox { since } => inbox_cmd(&app, &since),
         Cmd::Tracker(c) => tracker_cmd(&app, c),
+        Cmd::History { task, query, k } => history_cmd(&app, task, query, k),
+        Cmd::Note(c) => note_cmd(&app, c),
         Cmd::Incidents(c) => {
             let ctx = app.ctx(false)?;
             let repo = app.repo()?;
@@ -1748,6 +1780,77 @@ pub(crate) fn inbox_lines(ctx: &EngineCtx, since: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+fn history_cmd(app: &App, task: Option<String>, query: Vec<String>, k: usize) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let (repo, q, exclude) = match &task {
+        Some(t) => {
+            let t = ctx.store.load_task(t.trim_start_matches('#'))?;
+            (t.repo_root.clone(), crate::memory::query_for(&t), Some(t.task_id.clone()))
+        }
+        None => {
+            if query.is_empty() {
+                bail!("give --task N or a query");
+            }
+            let text = query.join(" ");
+            (app.repo()?, crate::memory::Query { paths: crate::memory::paths_in(&text), text, ..Default::default() }, None)
+        }
+    };
+    let records = crate::memory::collect(&ctx, &repo)?;
+    let hits = crate::memory::rank(&records, &q, crate::model::now(), k);
+    if app.cli_json {
+        return app.print_json(&hits).map(|_| 0);
+    }
+    let cfg = ctx.load_config(Some(&repo))?.config.memory;
+    let active = if cfg.active { crate::memory::active_work(&ctx, &repo, exclude.as_deref())? } else { vec![] };
+    match crate::memory::render(&hits, &active, cfg.max_chars) {
+        Some(s) => {
+            println!("{s}");
+            println!("---\nWhy these ({} of {} records in {}):", hits.len(), records.len(), repo.display());
+            for h in &hits {
+                println!("  {:>5.2}  {:<16} {}", h.score, h.record.kind.label(), h.why);
+            }
+            if !cfg.history {
+                println!("\nNote: memory.history is off in this repository's config; agents do not get this section.");
+            }
+        }
+        None => println!("nothing relevant in {} records", records.len()),
+    }
+    Ok(0)
+}
+
+fn note_cmd(app: &App, c: NoteCmd) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    match c {
+        NoteCmd::Add { text, scope } => {
+            let repo = app.repo()?;
+            let n = crate::memory::add_note(
+                &ctx,
+                crate::memory::Note { id: crate::model::new_id("note"), repo, text: text.join(" "), scope, author: format!("human:{}", user().unwrap_or_default()), at: crate::model::now(), run: None, task_id: None },
+            )?;
+            ctx.audit(crate::audit::EventDraft::new("note_added", crate::audit::Actor::human(user())).data(serde_json::json!({"id": n.id, "text": n.text, "scope": n.scope})));
+            println!("{} — agents working on {} will see it", n.id, if n.scope.is_empty() { "this repository".to_string() } else { n.scope.join(", ") });
+        }
+        NoteCmd::List => {
+            let repo = app.repo_opt();
+            let notes: Vec<_> = crate::memory::load_notes(&ctx).into_iter().filter(|n| repo.as_ref().is_none_or(|r| &n.repo == r)).collect();
+            if app.cli_json {
+                return app.print_json(&notes).map(|_| 0);
+            }
+            if notes.is_empty() {
+                println!("no notes");
+            }
+            for n in notes {
+                println!("{}  {}  {:<24} {}{}", n.id, n.at.format("%Y-%m-%d"), n.author.chars().take(24).collect::<String>(), n.text.chars().take(100).collect::<String>(), if n.scope.is_empty() { String::new() } else { format!("  [{}]", n.scope.join(", ")) });
+            }
+        }
+        NoteCmd::Rm { id } => {
+            crate::memory::remove_note(&ctx, &id)?;
+            println!("removed {id}");
+        }
+    }
+    Ok(0)
+}
+
 fn tracker_cmd(app: &App, c: TrackerCmd) -> Result<i32> {
     let ctx = app.ctx(false)?;
     let repo = app.repo()?;
@@ -1833,7 +1936,9 @@ fn eval_cmd(app: &App, c: EvalCmd) -> Result<i32> {
                 println!("{:<5} replay of {} on {}", r.eval_id, r.tasks.keys().cloned().collect::<Vec<_>>().join(","), r.runners.join(","));
             }
         }
-        EvalCmd::Run { cases, last, runners, yes } => {
+        EvalCmd::Run { cases, last, runners, arms, yes } => {
+            crate::eval::parse_arms(&arms)?;
+            let per_case = runners.len() * arms.len().max(1);
             let all = crate::eval::list_cases(&ctx)?;
             let ids: Vec<String> = match cases {
                 Some(c) => c,
@@ -1842,8 +1947,8 @@ fn eval_cmd(app: &App, c: EvalCmd) -> Result<i32> {
             if ids.is_empty() {
                 bail!("no eval cases yet — record some with `eval record <run>`");
             }
-            println!("{} case(s) × {} runner(s) = {} agent runs, each held to its case's locked contract", ids.len(), runners.len(), ids.len() * runners.len());
-            for (r, est) in crate::eval::estimate(&ctx, &runners, ids.len())? {
+            println!("{} case(s) × {} runner(s){} = {} agent runs, each held to its case's locked contract", ids.len(), runners.len(), if arms.is_empty() { String::new() } else { format!(" × {} arm(s)", arms.len()) }, ids.len() * per_case);
+            for (r, est) in crate::eval::estimate(&ctx, &runners, ids.len() * arms.len().max(1))? {
                 println!("  {r:<16} {}", est.map(|t| format!("~{} tokens (from your history)", t)).unwrap_or_else(|| "no history — cost unknown".into()));
             }
             if !yes {
@@ -1851,7 +1956,7 @@ fn eval_cmd(app: &App, c: EvalCmd) -> Result<i32> {
 Nothing started. Add --yes to run it (agents spend real tokens).");
                 return Ok(0);
             }
-            let ev = crate::eval::start(&ctx, &ids, &runners)?;
+            let ev = crate::eval::start(&ctx, &ids, &runners, &arms)?;
             println!("replay {} queued: {} task(s); results: herdr-orchestrator eval report {}", ev.eval_id, ev.tasks.len(), ev.eval_id);
             app.ensure_daemon()?;
         }

@@ -168,7 +168,7 @@ fn contract_runs_become_eval_cases_replayed_on_other_runners() {
     let r2 = h.settle(&t2.task_id)[0].clone();
     assert!(format!("{:#}", herdr_orchestrator::eval::record(&h.ctx, &r2.run_id).unwrap_err()).contains("no contract"));
 
-    let ev = herdr_orchestrator::eval::start(&h.ctx, &["C1".into()], &["fake-fix-contract".into(), "fake-success".into(), "fake-contract-tamper".into()]).unwrap();
+    let ev = herdr_orchestrator::eval::start(&h.ctx, &["C1".into()], &["fake-fix-contract".into(), "fake-success".into(), "fake-contract-tamper".into()], &[]).unwrap();
     let tid = ev.tasks["C1"].clone();
     let runs = h.settle(&tid);
     assert_eq!(runs.len(), 3);
@@ -183,4 +183,30 @@ fn contract_runs_become_eval_cases_replayed_on_other_runners() {
     assert_eq!(row("fake-success").failed, 1, "never satisfies the contract");
     assert_eq!(row("fake-contract-tamper").failed, 1, "cannot cheat by editing the contract");
     assert_eq!(rows[0].runner, "fake-fix-contract", "best first");
+}
+
+#[test]
+fn eval_arms_compare_history_against_none_without_leaking_the_solution() {
+    let mut h = Harness::new();
+    h.workflow("cf", WF);
+    let t = h.task_with("Make FIXED exist", opts("fake-fix-contract"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    h.decide(&r.run_id, true);
+    let r = h.settle(&t.task_id)[0].clone();
+    herdr_orchestrator::eval::record(&h.ctx, &r.run_id).unwrap();
+    let ev = herdr_orchestrator::eval::start(&h.ctx, &["C1".into()], &["fake-fix-contract".into()], &["history".into(), "no-history".into()]).unwrap();
+    let runs = h.settle(&ev.tasks["C1"]);
+    assert_eq!(runs.len(), 2);
+    let arms: Vec<Option<bool>> = runs.iter().map(|r| r.memory).collect();
+    assert!(arms.contains(&Some(true)) && arms.contains(&Some(false)));
+    // The original solution (same task, same files) is never shown to the replay.
+    for run in &runs {
+        let e = run.steps.iter().find(|e| e.step_id == "implement").unwrap();
+        let log = std::fs::read_to_string(e.log_path.as_ref().unwrap()).unwrap();
+        assert!(!log.contains(&format!("#{}", t.task_id)), "leaked the recorded run: {log}");
+    }
+    let rows = herdr_orchestrator::eval::report(&h.ctx, &ev.eval_id).unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r.runner.as_str()).collect();
+    assert!(names.contains(&"fake-fix-contract [history]") && names.contains(&"fake-fix-contract [no-history]"), "{names:?}");
+    assert!(herdr_orchestrator::eval::parse_arms(&["maybe".into()]).is_err());
 }

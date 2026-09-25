@@ -609,6 +609,32 @@
           "default": "contract-first"
         }
       }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project memory: prior work in this repository put into implementing, contract and planning agents' prompts (never reviewers').",
+      "properties": {
+        "history": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 500,
+          "default": 6000
+        },
+        "active": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also list runs working in the repository right now."
+        }
+      }
     }
   }
 }

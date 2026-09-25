@@ -5,6 +5,17 @@
 ### Fixed
 - **`repos:` now scopes file rules.** The run's repository root was set only on worktree-creation and command subjects, so a rule combining `paths` (or `added_lines`) with `repos` never matched at the diff gate, in the Claude `PreToolUse` hook, on commits or on PR creation. Every run subject now carries it, and `policy check` fills it from `--repo` / the Herdr context / the cwd.
 
+## [0.4.0] - 2026-09-25
+
+Project memory: agents start with what earlier runs in the same repository did, decided and got wrong.
+
+### Added
+- **Prior work in agent prompts** (`memory.history`, default on). Before an implementing, contract or planning agent starts, the orchestrator ranks this repository's history and adds a short, dated "Prior work in this repository" section (at most `memory.max_records` records within `memory.max_chars`): changes with their files and PRs, failed attempts with the reason, critical/high review findings, unmet acceptance criteria, approved contracts, ADR decisions of accepted epics, humans' reasons for denying an approval, and notes. Ranking: overlap with the task's scope and the paths it names first, then rare shared words, recency and trust (facts and humans over agents' opinions); a record needs file or word overlap to appear. Reviewers never get it, so their judgement stays independent. Each injection is audited (`memory_injected`, with every record and why it was chosen).
+- **Active work**: the same section lists runs working in the repository right now and where (`memory.active`).
+- **Notes for agents.** `herdr-orchestrator note add "…" [--scope 'src/fx/**']`, `note list`, `note rm`. Agents can leave `notes_for_others` in their result file (stored with the files they changed as scope). Notes reach agents whose work touches the scope.
+- `herdr-orchestrator history --task N` shows exactly the section a task's agent gets, with the score and reason for each record; `history "free text or paths"` searches the history.
+- **Measure it**: `eval run --runners claude --arms history,no-history` runs every case once per arm; `eval report` shows one row per runner and arm. Replays never see the recorded solution: history is cut at the moment the original run started and the original task is excluded.
+
 ## [0.3.1] - 2026-09-25
 
 ### Added

@@ -185,6 +185,12 @@ pub fn perform(scenario: &str, cwd: &Path, output_file: &Path, step_id: &str, at
             write(output_file, &summary("changed the contract"))?;
             Ok(FakeResult::Done)
         }
+        "leave-note" => {
+            write(&cwd.join("fake/fx.rs"), "// NAV currency\n")?;
+            let v = serde_json::json!({"summary": "normalized fx", "status": "done", "notes_for_others": ["NAV currency is canonical for scenario P&L"]});
+            write(output_file, &v.to_string())?;
+            Ok(FakeResult::Done)
+        }
         "resolve-conflicts" => {
             // Take both sides of every conflict (drop the markers).
             let out = std::process::Command::new("git").args(["diff", "--name-only", "--diff-filter=U"]).current_dir(cwd).output()?;

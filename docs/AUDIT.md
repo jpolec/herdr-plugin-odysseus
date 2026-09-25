@@ -98,6 +98,8 @@ Run logs:
 | `agent_blocked`, `agent_unblocked` | the agent waited for a human in its own UI |
 | `agent_failed` | agent timed out, failed or was lost |
 | `usage_recorded` | tokens/cost/runtime with provenance (pane agents: read from their session logs) |
+| `memory_injected` | project memory added to an agent's prompt: record ids, score, why each was chosen, size |
+| `note_added` | a note for agents (from `note add` or an agent's `notes_for_others`) |
 | `budget_exceeded` | run usage passed `limits.max_tokens`/`max_cost_usd`; an approval follows |
 | `review_completed` | review verdict and finding count, or the parse error |
 | `acceptance_verified` | acceptance review: met / not met / unverifiable counts and each criterion |

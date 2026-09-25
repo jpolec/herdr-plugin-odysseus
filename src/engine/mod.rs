@@ -367,6 +367,7 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
             selected: false,
             pr_feedback_seen: None,
             contract: None,
+            memory: task.options.variant_memory.get(v as usize).copied(),
         };
         ctx.store.save_run(&run)?;
         runs.push(run);
@@ -562,7 +563,8 @@ pub fn orchestrator_instructions(run: &Run, step_id: &str, attempt: u32, worktre
  "criteria_map": {"1": ["<test name>"], "2": ["..."]},
  "summary": "<what the tests pin down>"}"#
         }
-        AgentOutput::Summary => r#"{"summary": "<what you changed and why>", "status": "done" | "blocked", "notes": "<optional>"}"#,
+        AgentOutput::Summary => r#"{"summary": "<what you changed and why>", "status": "done" | "blocked", "notes": "<optional>",
+ "notes_for_others": ["<optional: short facts other agents working in this repository should know — a decision you made, a trap you found, a change in progress>"]}"#,
     };
     format!(
         "Orchestrator instructions (herdr-orchestrator run {run} step `{step}`, attempt {attempt}):\n\

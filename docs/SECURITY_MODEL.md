@@ -131,6 +131,19 @@ never types into the agent, interrupts it or fails the step.
 | Stop/interrupt | ✅ process group kill | ✅ interrupt keys via Herdr / close pane |
 | Audit | ✅ | ✅ lifecycle + resulting diff, not individual tool calls |
 
+### Project memory is untrusted context
+
+The "Prior work" section in agent prompts is built from recorded facts
+(changed files, failure reasons, approved contracts), human text (denial
+notes, `note add`) and agent text (review findings, `notes_for_others`).
+Agent-written notes therefore reach other agents: a prompt-injection path
+between agents. Mitigations: the section is explicitly labelled as history,
+not instructions; each record is one short line (notes ≤ 600 characters,
+at most five per result, secrets redacted); records need file or word
+overlap with the task to appear; every injection is audited with the record
+ids; `note list` / `note rm` let a human inspect and remove notes;
+`memory.history: false` turns it off. Raw conversations are never read.
+
 ## 2. Sandboxing
 
 `security/sandbox.rs` defines `ExecutionSandbox` with a `wrap(argv)` seam.

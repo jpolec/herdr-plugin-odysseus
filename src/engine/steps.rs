@@ -178,7 +178,12 @@ impl<'a> RunDriver<'a> {
             },
             None => None,
         };
-        let full = compose_prompt(skill_text.as_deref(), &body, &self.run, &step.id, attempt, &worktree, &output_file, *output);
+        let memory = if matches!(output, AgentOutput::Summary | AgentOutput::Contract | AgentOutput::Plan) && resumed.is_none() { self.memory_section(&step.id) } else { None };
+        let with_memory = match &memory {
+            Some(m) => format!("{}\n\n{m}", body.trim()),
+            None => body.clone(),
+        };
+        let full = compose_prompt(skill_text.as_deref(), &with_memory, &self.run, &step.id, attempt, &worktree, &output_file, *output);
         let followup = format!("{}\n\n---\n\n{}", body.trim(), orchestrator_instructions(&self.run, &step.id, attempt, &worktree, &output_file, *output));
         let log_path = self.ctx.store.layout.run_logs_dir(&self.run.run_id).join(format!("{exec_id}.log"));
         let mut env = self.cfg.config.environment.clone();
@@ -379,6 +384,9 @@ impl<'a> RunDriver<'a> {
                 }
             }
             output_text = Some(redact_str(&text));
+            if let Some(notes) = raw.as_deref().and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok()).and_then(|v| v.get("notes_for_others").cloned()) {
+                self.store_agent_notes(&runner_name, &notes, &worktree);
+            }
         }
         self.exec_mut(&exec_id).output_excerpt = output_text.clone().map(|t| crate::checks::excerpt(&t, 20, 20, 4000));
         // Handoff files never leave the orchestrator dir; keep a copy in logs.
@@ -546,6 +554,58 @@ impl<'a> RunDriver<'a> {
             h.splice(at..at, ["--settings".to_string(), arg]);
         }
         Ok(())
+    }
+
+    /// "Prior work in this repository" for this run's task, if enabled.
+    fn memory_section(&mut self, step_id: &str) -> Option<String> {
+        let mc = self.cfg.config.memory.clone();
+        if !self.run.memory.unwrap_or(mc.history) {
+            return None;
+        }
+        let mut q = crate::memory::query_for(&self.task);
+        // An eval replay sees history as it was when the case's original run
+        // started, and never the original solution.
+        if let Some(case) = self.task.options.eval_case.as_ref().and_then(|c| crate::eval::load_case(self.ctx, c).ok()) {
+            if let Ok(src) = self.ctx.store.load_run(&case.source_run) {
+                q.before = src.started_at.or(Some(src.created_at));
+                q.exclude_tasks.insert(src.task_id);
+            }
+        }
+        let records = crate::memory::collect(self.ctx, &self.run.repo_root).ok()?;
+        let hits = crate::memory::rank(&records, &q, now(), mc.max_records);
+        let active = if mc.active && self.task.options.eval_case.is_none() { crate::memory::active_work(self.ctx, &self.run.repo_root, Some(&self.task.task_id)).unwrap_or_default() } else { vec![] };
+        let section = crate::memory::render(&hits, &active, mc.max_chars)?;
+        self.audit(
+            "memory_injected",
+            Actor::orchestrator(),
+            Some(step_id),
+            serde_json::json!({"records": hits.iter().map(|h| serde_json::json!({"id": h.record.id, "score": (h.score * 100.0).round() / 100.0, "why": h.why})).collect::<Vec<_>>(), "active": active.len(), "chars": section.len()}),
+        );
+        Some(section)
+    }
+
+    /// Keep an agent's `notes_for_others`, scoped to the files it changed.
+    fn store_agent_notes(&mut self, runner: &str, notes: &serde_json::Value, worktree: &std::path::Path) {
+        let texts: Vec<String> = notes.as_array().into_iter().flatten().filter_map(|n| n.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).take(5).collect();
+        if texts.is_empty() {
+            return;
+        }
+        let scope: Vec<String> = self.run.git.base_sha.as_deref().and_then(|b| crate::git::changed_files(worktree, b).ok()).map(|d| d.files.into_iter().take(20).map(|f| f.path).collect()).unwrap_or_default();
+        for t in texts {
+            let note = crate::memory::Note {
+                id: new_id("note"),
+                repo: self.run.repo_root.clone(),
+                text: redact_str(&t.chars().take(600).collect::<String>()),
+                scope: scope.clone(),
+                author: format!("agent:{runner} {}", self.run.display_name()),
+                at: now(),
+                run: Some(self.run.display_name()),
+                task_id: Some(self.run.task_id.clone()),
+            };
+            if crate::memory::add_note(self.ctx, note.clone()).is_ok() {
+                self.audit("note_added", Actor::agent(runner, None), None, serde_json::json!({"id": note.id, "text": note.text, "scope": note.scope}));
+            }
+        }
     }
 
     /// Pane agents report no usage themselves; read it from the agent's own

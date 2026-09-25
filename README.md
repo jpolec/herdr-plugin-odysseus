@@ -215,6 +215,19 @@ every pane. Nothing here needs a restart. Do not edit ~/.config/herdr/config.tom
 without asking me.
 ```
 
+### Project memory
+
+Agents start with what earlier runs in the same repository did: changes,
+failed attempts and why, review findings, approved contracts, ADR decisions,
+your reasons for saying no, and notes — ranked by overlap with the task's
+files, only a few lines. Reviewers never get it.
+
+```sh
+herdr-orchestrator history --task 12                    # exactly what the agent will see, and why
+herdr-orchestrator note add "NAV currency is canonical" --scope 'src/fx/**'
+herdr-orchestrator eval run --runners claude --arms history,no-history --yes   # does it help?
+```
+
 ### See what needs you in Herdr's sidebar
 
 Each run's workspace shows its state as a sidebar token — `⏳ approve: contract`,
@@ -356,6 +369,8 @@ herdr-orchestrator task unblock 14                                 # start despi
 herdr-orchestrator run followup '#12'                              # PR comments + failing CI → follow-up
 herdr-orchestrator gc [--yes]                                      # remove merged/closed worktrees
 herdr-orchestrator stats                                           # per runner: success, retries, tokens
+herdr-orchestrator history --task 12 | history "fx rounding"      # project memory an agent gets
+herdr-orchestrator note add "…" --scope 'src/fx/**' | note list | note rm <id>
 herdr-orchestrator task create "…" -w contract-first | receipt verify '#14' [--at main]
 herdr-orchestrator eval record '#14' | eval run --runners claude,codex [--yes] | eval report
 herdr-orchestrator inbox [--since 12h] | approval batch --max-risk low
