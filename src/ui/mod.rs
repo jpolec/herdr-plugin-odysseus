@@ -569,6 +569,19 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
             state.selected = 0;
             load(state, ctx);
         }
+        KeyCode::Char('u') => {
+            if let Some(r) = selected_run(state) {
+                match crate::engine::update::update_branch(ctx, &r.run_id, None, None, "ui") {
+                    Ok((t, c)) => {
+                        let _ = crate::daemon::ensure(&ctx.store.layout, &[]);
+                        crate::daemon::nudge(&ctx.store.layout);
+                        state.flash(if c.is_empty() { format!("merged cleanly; #{} re-tests it", t.task_id) } else { format!("{} conflict(s); #{} resolves them", c.len(), t.task_id) });
+                    }
+                    Err(e) => state.flash(format!("{e:#}")),
+                }
+                load(state, ctx);
+            }
+        }
         KeyCode::Char('F') => {
             if let Some(r) = selected_run(state) {
                 match crate::engine::followup::pr_followup(ctx, &r.run_id, None, None, "ui") {

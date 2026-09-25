@@ -1,0 +1,16 @@
+# update-verify: after a clean merge of the base into a run's branch (used by
+# `run update`): tests → approval → push to the existing PR.
+version: 1
+name: update-verify
+description: Verify a branch after merging its base (clean merge; used by `run update`).
+steps:
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+  - id: approval
+    type: approval
+    reason: The branch was updated with its base and the tests pass. Approve to push.
+  - id: pr
+    type: github_pr
+    draft: true
