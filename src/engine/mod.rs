@@ -1,6 +1,7 @@
 //! Orchestration engine: task intake, run creation, the durable run driver,
 //! the scheduler and dry-run planning.
 
+pub mod digest;
 pub mod driver;
 pub mod followup;
 pub mod handoff;

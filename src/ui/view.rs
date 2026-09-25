@@ -43,6 +43,7 @@ pub fn render(f: &mut Frame, s: &State) {
         Screen::NewTask => new_task(f, main, s.form.as_ref()),
         Screen::Agent(id) => agent_screen(f, main, s, id),
         Screen::Epics => epics(f, main, s),
+        Screen::Inbox { scroll } => inbox(f, main, s, *scroll),
         Screen::EpicDetail { id, scroll } => text(f, main, &format!("epic {id}"), &s.epic_lines, *scroll),
     }
     footer_bar(f, footer, s);
@@ -50,6 +51,7 @@ pub fn render(f: &mut Frame, s: &State) {
         let msg = match p {
             Pending::CancelRun(id) => format!("Cancel run {}? The agent is interrupted; its worktree is kept.  [y] yes  [any] no", s.run(id).map(|r| r.display_name()).unwrap_or(id.clone())),
             Pending::Deny(id) => format!("Deny approval {id}? The run will fail at this step.  [y] yes  [any] no"),
+            Pending::BatchApprove => "Approve every pending low-risk \"ship it?\" step (policy questions are never batch-approved)?  [y] yes  [any] no".to_string(),
             Pending::RejectEpic(id) => format!("Reject the open plan tasks of epic {id}? Accepted tasks keep running.  [y] yes  [any] no"),
         };
         let w = (msg.len() as u16 + 4).min(area.width.saturating_sub(4));
@@ -65,11 +67,12 @@ fn footer_bar(f: &mut Frame, area: Rect, s: &State) {
     let agents = s.runs.iter().flat_map(|r| r.steps.iter()).filter(|e| e.kind == StepKind::Agent && matches!(e.status, StepStatus::Running | StepStatus::AwaitingHuman | StepStatus::Starting)).count();
     let appr = s.pending_approvals().len();
     let keys = match &s.screen {
-        Screen::Dashboard => "[n] new  [enter] inspect  [a] approvals  [e] epics  [r] retry  [x] cancel  [d] diff  [f] focus agent  [F] PR follow-up  [p] pause queue  [q] quit",
+        Screen::Inbox { .. } => "[↑↓] scroll  [a] approvals  [A] approve all low-risk ship-its  [e] epics  [esc] back",
+        Screen::Dashboard => "[n] new  [enter] inspect  [i] inbox  [a] approvals  [e] epics  [r] retry  [x] cancel  [d] diff  [f] focus agent  [F] PR follow-up  [p] pause queue  [q] quit",
         Screen::RunDetail(_) => "[↑↓] step  [enter/l] log  [d] diff  [f] focus agent  [a] approval  [F] PR follow-up  [r] retry  [x] cancel  [esc] back",
         Screen::Epics => "[↑↓] select  [enter] plan  [y] accept open tasks  [n] reject  [g] re-plan  [v] verify vs ADR  [esc] back",
         Screen::EpicDetail { .. } => "[↑↓] scroll  [y] accept open tasks  [n] reject  [g] re-plan  [v] verify vs ADR  [esc] back",
-        Screen::Approvals => "[↑↓] select  [enter] open  [esc] back",
+        Screen::Approvals => "[↑↓] select  [enter] open  [A] approve all low-risk ship-its  [esc] back",
         Screen::ApprovalDetail(_) => "[y] approve once  [n] deny  [c] cancel run  [d] diff  [f] open agent pane  [esc] back",
         Screen::Text { .. } => "[↑↓/space] scroll  [g/G] top/bottom  [esc] back",
         Screen::NewTask => "[tab] next field  [←→] choose  [ctrl+s] create  [esc] cancel",
@@ -257,6 +260,27 @@ fn run_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
         }
     }
     f.render_widget(Paragraph::new(b).block(Block::new().borders(Borders::TOP)), bottom);
+}
+
+fn inbox(f: &mut Frame, area: Rect, s: &State, scroll: usize) {
+    let mut lines = vec![Line::styled(" INBOX — what needs you, most urgent first", Style::new().add_modifier(Modifier::BOLD)), Line::raw("")];
+    for l in s.inbox_lines.iter().skip(scroll) {
+        let color = if l.contains("[high]") {
+            Color::Red
+        } else if l.contains("[medium]") {
+            Color::Yellow
+        } else if l.contains("[low]") {
+            Color::Green
+        } else if l.starts_with("AGENT") || l.starts_with("STOPPED") {
+            Color::Magenta
+        } else if l.starts_with("          ") {
+            Color::DarkGray
+        } else {
+            Color::Reset
+        };
+        lines.push(Line::styled(format!(" {l}"), Style::new().fg(color)));
+    }
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 fn epics(f: &mut Frame, area: Rect, s: &State) {
