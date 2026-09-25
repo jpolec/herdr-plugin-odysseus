@@ -333,6 +333,17 @@ fn approval_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
             ]));
         }
     }
+    if let Some(k) = &c.contract {
+        lines.push(kv("Contract", format!("{}{}", k.files.join(", "), if k.approved { "  (approved, locked)" } else { "  — approving locks it" })));
+        lines.push(kv("  check", k.check.clone()));
+        for m in &k.criteria_map {
+            lines.push(kv("  covers", m.clone()));
+        }
+        lines.push(kv("  red proof", "fails on the base, as it must:".into()));
+        for l in k.red_excerpt.lines().take(8) {
+            lines.push(Line::styled(format!("               {l}"), Style::new().fg(Color::DarkGray)));
+        }
+    }
     if !c.manual_checks.is_empty() {
         lines.push(kv("Check yourself", String::new()));
         for m in &c.manual_checks {

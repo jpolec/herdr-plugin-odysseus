@@ -48,6 +48,12 @@ fn contract_is_red_then_approved_locked_and_green() {
     assert_eq!(c.check, vec!["test", "-f", "FIXED"]);
     assert!(c.approval_id.is_none());
     assert!(h.events(&r.run_id).contains(&"contract_locked".into()));
+    // The reviewer sees the evidence.
+    let a = h.pending_approval(&r.run_id).unwrap();
+    let k = a.context.contract.clone().unwrap();
+    assert_eq!(k.check, "test -f FIXED");
+    assert_eq!(k.criteria_map, vec!["1 → fixed_exists"]);
+    assert!(!k.approved);
     h.decide(&r.run_id, true);
     let r = &h.settle(&t.task_id)[0];
     assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
@@ -125,4 +131,21 @@ fn builtin_contract_first_opens_a_pr_with_a_receipt() {
     assert!(log.contains("herdr-orchestrator-receipt: v1"), "{log}");
     assert!(log.contains(&r.contract.as_ref().unwrap().sha256));
     assert!(herdr_orchestrator::engine::receipt::verify(&h.ctx, r.pr_url.as_deref().unwrap(), None).unwrap().ok);
+}
+
+#[test]
+fn approver_may_amend_the_contract_and_the_receipt_says_so() {
+    let mut h = Harness::new();
+    h.workflow("cf", WF);
+    let t = h.task_with("x", opts("fake-fix-contract"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let wt = r.git.worktree_path.clone().unwrap();
+    std::fs::write(wt.join("tests/contract.txt"), "FIXED must exist and be checked\n").unwrap();
+    h.decide(&r.run_id, true);
+    let r = &h.settle(&t.task_id)[0];
+    assert_eq!(r.status, RunStatus::Succeeded, "{:?}", r.status_reason);
+    let c = r.contract.clone().unwrap();
+    assert!(c.amended);
+    assert!(h.events(&r.run_id).contains(&"contract_amended".into()));
+    assert!(herdr_orchestrator::engine::receipt::verify(&h.ctx, &r.run_id, None).unwrap().ok);
 }

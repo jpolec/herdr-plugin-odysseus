@@ -417,6 +417,9 @@ pub struct Contract {
     pub approved_by: Option<String>,
     #[serde(default)]
     pub approved_at: Option<Timestamp>,
+    /// The approver changed contract files before approving.
+    #[serde(default)]
+    pub amended: bool,
 }
 
 impl Contract {

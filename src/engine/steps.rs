@@ -47,6 +47,7 @@ impl<'a> RunDriver<'a> {
     fn finish_exec(&mut self, exec_id: &str, status: StepStatus, error: Option<String>) -> Result<()> {
         {
             let e = self.exec_mut(exec_id);
+            e.attention = None;
             if let Some(err) = error {
                 e.error = Some(err);
             }
@@ -457,6 +458,7 @@ impl<'a> RunDriver<'a> {
             approval_id: None,
             approved_by: None,
             approved_at: None,
+            amended: false,
         };
         self.audit("contract_locked", Actor::orchestrator(), Some(&step.id), serde_json::json!({"sha256": c.sha256, "files": c.files, "check": c.check, "commit": c.commit}));
         self.run.contract = Some(c);
@@ -950,6 +952,13 @@ impl<'a> RunDriver<'a> {
             pending_action,
             acceptance: crate::approvals::acceptance_rows(&self.task.acceptance, self.latest_acceptance()),
             manual_checks: self.task.manual_checks.clone(),
+            contract: self.run.contract.as_ref().map(|c| crate::approvals::ContractSummary {
+                files: c.files.keys().cloned().collect(),
+                check: crate::policies::command::display_argv(&c.check),
+                red_excerpt: c.red_excerpt.lines().rev().take(15).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"),
+                criteria_map: c.criteria_map.iter().map(|(k, v)| format!("{k} → {}", v.join(", "))).collect(),
+                approved: c.approval_id.is_some(),
+            }),
         }
     }
 
@@ -1078,6 +1087,26 @@ impl<'a> RunDriver<'a> {
                 let approval_id = self.exec_mut(&exec_id).approval_id.clone().unwrap_or_default();
                 // The first approval after the contract was locked approves it.
                 if self.run.contract.as_ref().is_some_and(|c| c.approval_id.is_none()) {
+                    // The human may have edited the tests before approving:
+                    // what they approved is what gets locked, and the receipt
+                    // says it was amended (no new red proof: their call).
+                    if let Some(w) = self.run.git.worktree_path.clone() {
+                        let changed = self.contract_violations(&w);
+                        if !changed.is_empty() {
+                            let old = self.run.contract.as_ref().unwrap().sha256.clone();
+                            if let Some(c) = self.run.contract.as_mut() {
+                                for p in &changed {
+                                    if let Ok(b) = std::fs::read(w.join(p)) {
+                                        c.files.insert(p.clone(), format!("sha256:{}", crate::store::sha256_hex(&b)));
+                                    }
+                                }
+                                c.sha256 = Contract::combined_hash(&c.files);
+                                c.amended = true;
+                            }
+                            let new = self.run.contract.as_ref().unwrap().sha256.clone();
+                            self.audit("contract_amended", Actor::human(None), Some(&step.id), serde_json::json!({"old": old, "new": new, "files": changed}));
+                        }
+                    }
                     let a = self.ctx.store.load_approval(&approval_id).ok();
                     if let Some(c) = self.run.contract.as_mut() {
                         c.approval_id = Some(approval_id.clone());
@@ -1497,7 +1526,8 @@ impl<'a> RunDriver<'a> {
         b.push_str(&format!("\nAgent usage: {}.\n", crate::telemetry::tokens_display(&u)));
         if let Some(c) = &self.run.contract {
             b.push_str(&format!(
-                "\n### Contract\n\nTests written before the implementation, failing on the base, approved{} and locked. The implementation did not change them.\n\n",
+                "\n### Contract\n\nTests written before the implementation, failing on the base, approved{}{} and locked. The implementation did not change them.\n\n",
+                if c.amended { " (amended by the approver)" } else { "" },
                 match (&c.approved_by, c.approved_at) {
                     (Some(who), Some(at)) => format!(" by {who} at {}", at.format("%Y-%m-%d %H:%M UTC")),
                     _ => String::new(),

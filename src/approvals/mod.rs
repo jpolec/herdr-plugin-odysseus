@@ -77,6 +77,20 @@ pub struct ApprovalContext {
     /// Checks only a human can do (from an accepted epic plan).
     #[serde(default)]
     pub manual_checks: Vec<String>,
+    /// The contract under review or in force (contract-first runs).
+    #[serde(default)]
+    pub contract: Option<ContractSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ContractSummary {
+    pub files: Vec<String>,
+    pub check: String,
+    /// Tail of the failing run on the base (the red proof).
+    pub red_excerpt: String,
+    /// "criterion → tests" lines.
+    pub criteria_map: Vec<String>,
+    pub approved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
