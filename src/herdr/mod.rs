@@ -74,6 +74,12 @@ pub trait HerdrApi: Send + Sync {
     fn create_tab(&self, workspace_id: &str, cwd: &Path, label: &str, env: &BTreeMap<String, String>) -> HResult<TabHandle>;
     fn rename_pane(&self, pane_id: &str, label: &str) -> HResult<()>;
     fn report_metadata(&self, pane_id: &str, title: &str, tokens: &BTreeMap<String, Option<String>>) -> HResult<()>;
+    /// Custom sidebar tokens on a workspace (`$token` in `[ui.sidebar.spaces]`).
+    /// A `None` value clears the token.
+    fn report_workspace_metadata(&self, workspace_id: &str, tokens: &BTreeMap<String, Option<String>>, ttl_ms: Option<u64>) -> HResult<()> {
+        let _ = (workspace_id, tokens, ttl_ms);
+        Ok(())
+    }
     fn get_pane(&self, pane_id: &str) -> HResult<Option<PaneInfo>>;
     fn list_panes(&self) -> HResult<Vec<PaneInfo>>;
     /// Recent scrollback (unwrapped), for transcripts.

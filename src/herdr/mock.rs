@@ -69,6 +69,8 @@ struct State {
     /// shell that is not ready yet, as real Herdr does right after
     /// `tab.create`).
     busy_starts: u32,
+    /// Every workspace metadata report, in order: (workspace, token, value).
+    workspace_tokens: Vec<(String, String, Option<String>)>,
 }
 
 pub struct MockHerdr {
@@ -97,6 +99,10 @@ impl MockHerdr {
     }
     pub fn calls(&self) -> Vec<String> {
         self.state.lock().unwrap().calls.clone()
+    }
+    /// Workspace sidebar token reports so far: (workspace, token, value).
+    pub fn workspace_tokens(&self) -> Vec<(String, String, Option<String>)> {
+        self.state.lock().unwrap().workspace_tokens.clone()
     }
     pub fn notifications(&self) -> Vec<(String, String)> {
         self.state.lock().unwrap().notifications.clone()
@@ -274,6 +280,13 @@ impl HerdrApi for MockHerdr {
         let mut st = self.check(format!("pane.report_metadata {pane_id}"))?;
         if let Some(p) = st.panes.get_mut(pane_id) {
             p.metadata_title = Some(title.into());
+        }
+        Ok(())
+    }
+    fn report_workspace_metadata(&self, workspace_id: &str, tokens: &BTreeMap<String, Option<String>>, _ttl_ms: Option<u64>) -> HResult<()> {
+        let mut st = self.check(format!("workspace.report_metadata {workspace_id}"))?;
+        for (k, v) in tokens {
+            st.workspace_tokens.push((workspace_id.to_string(), k.clone(), v.clone()));
         }
         Ok(())
     }

@@ -1078,3 +1078,31 @@ fn watchdog_hands_a_stuck_agent_to_a_human() {
     herdr_orchestrator::engine::request_cancel(&h.ctx, &r.run_id, "test", None).unwrap();
     assert_eq!(h.settle(&tid)[0].status, RunStatus::Cancelled);
 }
+
+#[test]
+fn run_state_is_shown_in_the_herdr_sidebar() {
+    let mock = Arc::new(MockHerdr::new(pane_behavior("success")));
+    let mut h = Harness::with_herdr(Some(mock.clone() as Arc<dyn HerdrApi>));
+    h.workflow("ask", "  - id: implement\n    type: agent\n    prompt: x\n  - id: ship\n    type: approval\n    reason: ok?\n");
+    let t = h.task("Sidebar", "ask", Some("claude"));
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    let ws = r.herdr.workspace_id.clone().unwrap();
+    let seen = |m: &MockHerdr| m.workspace_tokens().into_iter().filter(|(w, k, _)| *w == ws && k == "orch").filter_map(|(_, _, v)| v).collect::<Vec<_>>();
+    assert!(h.until(Duration::from_secs(5), |_| seen(&mock).last().map(String::as_str) == Some("⏳ approve: ship")), "{:?}", seen(&mock));
+    let got = seen(&mock);
+    assert!(got.iter().any(|v| v.starts_with("→ implement · claude")), "{got:?}");
+    assert_eq!(got.last().map(String::as_str), Some("⏳ approve: ship"), "{got:?}");
+    // Reported only on change.
+    let mut dedup = got.clone();
+    dedup.dedup();
+    assert_eq!(dedup, got);
+    h.decide(&r.run_id, true);
+    h.settle(&t.task_id);
+    assert!(h.until(Duration::from_secs(5), |_| seen(&mock).last().is_some_and(|v| v.starts_with("✓ done"))), "{:?}", seen(&mock));
+    // Off when the token is empty.
+    h.project_file("config.yaml", "herdr:\n  sidebar_token: \"\"\n");
+    let before = mock.workspace_tokens().len();
+    let t2 = h.task("No sidebar", "quick-task", Some("claude"));
+    h.settle(&t2.task_id);
+    assert_eq!(mock.workspace_tokens().len(), before);
+}

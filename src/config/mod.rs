@@ -280,11 +280,15 @@ pub struct HerdrConfig {
     /// After a prompt, a "finished" report without a result file is
     /// double-checked for this long (agents may not have started yet).
     pub settle_window: HumanDuration,
+    /// Sidebar token set on each run's workspace with its state
+    /// (`⏳ approve: contract`, `→ implement · claude`, `✓ done`…). Show it by
+    /// adding `{ token = "$orch" }` to `[ui.sidebar.spaces]`. Empty = off.
+    pub sidebar_token: String,
 }
 
 impl Default for HerdrConfig {
     fn default() -> Self {
-        Self { mode: HerdrMode::Auto, socket: None, notify: true, close_panes_on_success: true, interrupt_on_timeout: true, settle_window: HumanDuration::from_secs(30) }
+        Self { mode: HerdrMode::Auto, socket: None, notify: true, close_panes_on_success: true, interrupt_on_timeout: true, settle_window: HumanDuration::from_secs(30), sidebar_token: "orch".into() }
     }
 }
 
@@ -638,6 +642,9 @@ pub fn validate(c: &Config) -> Result<()> {
         bail!("limits.max_agents_per_run must be at least 1");
     }
     crate::git::validate_branch_prefix(&c.git.branch_prefix)?;
+    if !c.herdr.sidebar_token.is_empty() && (c.herdr.sidebar_token.len() > 32 || !c.herdr.sidebar_token.chars().all(|x| x.is_ascii_alphanumeric() || x == '_' || x == '-')) {
+        bail!("herdr.sidebar_token must be 1-32 letters, digits, '_' or '-' (or empty to disable)");
+    }
     if c.epic.max_tasks == 0 || c.epic.max_tasks > 50 {
         bail!("epic.max_tasks must be between 1 and 50");
     }

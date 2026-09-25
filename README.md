@@ -215,6 +215,21 @@ every pane. Nothing here needs a restart. Do not edit ~/.config/herdr/config.tom
 without asking me.
 ```
 
+### See what needs you in Herdr's sidebar
+
+Each run's workspace shows its state as a sidebar token — `⏳ approve: contract`,
+`→ implement · claude`, `⚠ stuck: implement`, `✓ done · 3.6k tok`. Add the
+`$orch` token to your sidebar rows in `~/.config/herdr/config.toml` (the plugin
+never edits your config), then `herdr server reload-config`:
+
+```toml
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  [{ token = "$orch", fg = "#ffcb6b" }]
+]
+```
+
 ## Workflows
 
 | Workflow | What happens |

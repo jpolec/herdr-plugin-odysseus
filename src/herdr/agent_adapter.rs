@@ -76,6 +76,11 @@ impl HerdrApi for SocketHerdr {
     fn report_metadata(&self, pane_id: &str, title: &str, tokens: &std::collections::BTreeMap<String, Option<String>>) -> HResult<()> {
         self.pane_report_metadata(pane_id, title, tokens)
     }
+    fn report_workspace_metadata(&self, workspace_id: &str, tokens: &std::collections::BTreeMap<String, Option<String>>, ttl_ms: Option<u64>) -> HResult<()> {
+        self.client
+            .request("workspace.report_metadata", serde_json::json!({"workspace_id": workspace_id, "source": super::METADATA_SOURCE, "tokens": tokens, "ttl_ms": ttl_ms}), None)
+            .map(|_| ())
+    }
     fn get_pane(&self, pane_id: &str) -> HResult<Option<PaneInfo>> {
         self.pane_get(pane_id)
     }
