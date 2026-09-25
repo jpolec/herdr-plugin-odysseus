@@ -68,8 +68,8 @@ fn footer_bar(f: &mut Frame, area: Rect, s: &State) {
     let appr = s.pending_approvals().len();
     let keys = match &s.screen {
         Screen::Inbox { .. } => "[↑↓] scroll  [a] approvals  [A] approve all low-risk ship-its  [e] epics  [esc] back",
-        Screen::Dashboard => "[n] new  [enter] inspect  [i] inbox  [a] approvals  [e] epics  [r] retry  [x] cancel  [d] diff  [f] focus agent  [F] PR follow-up  [p] pause queue  [q] quit",
-        Screen::RunDetail(_) => "[↑↓] step  [enter/l] log  [d] diff  [f] focus agent  [a] approval  [F] PR follow-up  [r] retry  [x] cancel  [esc] back",
+        Screen::Dashboard => "[n] new  [enter] inspect  [i] inbox  [a] approvals  [e] epics  [r] retry  [x] cancel  [d] diff  [f] focus agent  [F] PR follow-up  [u] update branch  [p] pause queue  [q] quit",
+        Screen::RunDetail(_) => "[↑↓] step  [enter/l] log  [d] diff  [f] focus agent  [a] approval  [F] PR follow-up  [u] update branch  [r] retry  [x] cancel  [esc] back",
         Screen::Epics => "[↑↓] select  [enter] plan  [y] accept open tasks  [n] reject  [g] re-plan  [v] verify vs ADR  [esc] back",
         Screen::EpicDetail { .. } => "[↑↓] scroll  [y] accept open tasks  [n] reject  [g] re-plan  [v] verify vs ADR  [esc] back",
         Screen::Approvals => "[↑↓] select  [enter] open  [A] approve all low-risk ship-its  [esc] back",
