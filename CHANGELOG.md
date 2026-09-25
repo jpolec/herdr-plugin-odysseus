@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`repos:` now scopes file rules.** The run's repository root was set only on worktree-creation and command subjects, so a rule combining `paths` (or `added_lines`) with `repos` never matched at the diff gate, in the Claude `PreToolUse` hook, on commits or on PR creation. Every run subject now carries it, and `policy check` fills it from `--repo` / the Herdr context / the cwd.
+
 ## [0.3.1] - 2026-09-25
 
 ### Added

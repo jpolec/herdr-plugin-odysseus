@@ -713,6 +713,28 @@ mod tests {
     }
 
     #[test]
+    fn repos_scopes_file_rules() {
+        let mut s = PolicySet::empty(Decision::Allow);
+        s.add(
+            PolicyFile::parse(
+                "version: 1\nrules:\n  - id: r\n    match: {paths: ['_doc/**'], repos: ['/work/qj/**']}\n    actions: [write]\n    decision: deny\n",
+            )
+            .unwrap(),
+            "p",
+        )
+        .unwrap();
+        let with_repo = |repo: Option<&str>| {
+            let mut sub = Subject::file(Action::Write, "_doc/a.md");
+            sub.repo = repo.map(String::from);
+            s.evaluate(&sub).decision
+        };
+        assert_eq!(with_repo(Some("/work/qj/_repo_api")), Decision::Deny);
+        assert_eq!(with_repo(Some("/work/other/app")), Decision::Allow);
+        // Without a repo on the subject a `repos:` rule cannot match.
+        assert_eq!(with_repo(None), Decision::Allow);
+    }
+
+    #[test]
     fn rejects_bad_policies() {
         assert!(PolicyFile::parse("version: 2\n").is_err());
         assert!(PolicyFile::parse("version: 1\nrules:\n  - id: x\n    decision: nope\n").is_err());
