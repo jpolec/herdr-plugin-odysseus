@@ -21,8 +21,10 @@ fn overlapping_scopes_wait_disjoint_ones_run() {
     let ra = h.wait_status(&a.task_id, RunStatus::AwaitingApproval);
     let b = scoped(&h, "overlaps", "fake/implement.txt");
     let c = scoped(&h, "elsewhere", "docs/**");
-    let (bid, cid) = (b.task_id.clone(), c.task_id.clone());
-    assert!(h.until(Duration::from_secs(10), |h| h.ctx.store.load_task(&bid).unwrap().waiting_on.is_some() && !h.ctx.store.load_task(&cid).unwrap().run_ids.is_empty()));
+    // A scope that starts with a wildcard does not block unrelated work.
+    let d = scoped(&h, "markdown anywhere", "**/*.md");
+    let (bid, cid, did) = (b.task_id.clone(), c.task_id.clone(), d.task_id.clone());
+    assert!(h.until(Duration::from_secs(10), |h| h.ctx.store.load_task(&bid).unwrap().waiting_on.is_some() && !h.ctx.store.load_task(&cid).unwrap().run_ids.is_empty() && !h.ctx.store.load_task(&did).unwrap().run_ids.is_empty()));
     let w = h.ctx.store.load_task(&bid).unwrap().waiting_on.unwrap();
     assert!(w.contains(&format!("#{}", a.task_id)) && w.contains("may conflict"), "{w}");
     assert!(h.ctx.store.load_task(&bid).unwrap().run_ids.is_empty());
