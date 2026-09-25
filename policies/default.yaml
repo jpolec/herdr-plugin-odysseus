@@ -160,6 +160,89 @@ rules:
     decision: require_approval
     reason: authentication/security configuration
 
+  - id: approve-agent-instructions-and-orchestrator-config
+    description: >-
+      Agents must not quietly rewrite the rules they run under: orchestrator
+      policy and workflows, skills, and the instruction and permission files
+      of coding agents. A change here applies to every future run once merged.
+    match:
+      paths:
+        - "**/.ai/herdr-orchestrator/**"
+        - "**/.ai/skills/**"
+        - "**/.claude/**"
+        - "**/CLAUDE.md"
+        - "**/CLAUDE.local.md"
+        - "**/AGENTS.md"
+        - "**/AGENT.md"
+        - "**/GEMINI.md"
+        - "**/.codex/**"
+        - "**/.gemini/**"
+        - "**/.cursor/**"
+        - "**/.cursorrules"
+        - "**/.windsurfrules"
+        - "**/.clinerules"
+        - "**/.github/copilot-instructions.md"
+        - "**/.mcp.json"
+    actions: [write, delete]
+    decision: require_approval
+    reason: agent instructions, agent permissions or orchestrator policy
+
+  - id: approve-test-deletion
+    description: Deleting tests is a common way for an agent to make a check pass.
+    match:
+      paths:
+        - "**/tests/**"
+        - "**/test/**"
+        - "**/__tests__/**"
+        - "**/spec/**"
+        - "**/*_test.*"
+        - "**/*_spec.*"
+        - "**/*.test.*"
+        - "**/*.spec.*"
+        - "**/test_*.py"
+    actions: [delete]
+    decision: require_approval
+    reason: test file deleted
+
+  - id: approve-test-runner-config
+    description: Test runner and coverage settings decide what "tests pass" means.
+    match:
+      paths:
+        - "**/pytest.ini"
+        - "**/tox.ini"
+        - "**/jest.config*"
+        - "**/vitest.config*"
+        - "**/karma.conf*"
+        - "**/.mocharc*"
+        - "**/phpunit.xml*"
+        - "**/.nycrc*"
+        - "**/.coveragerc"
+        - "**/codecov.yml"
+        - "**/.codecov.yml"
+    actions: [write, delete]
+    decision: require_approval
+    reason: test runner or coverage configuration
+
+  - id: approve-disabled-tests
+    description: >-
+      Added lines that skip, ignore or focus tests. Matched on the content a
+      change adds, so re-enabling a test is never flagged.
+    match:
+      added_lines:
+        - '#\[ignore\b'
+        - '\b(it|test|describe|context)\.(skip|only|todo)\s*\('
+        - '(^|[^.\w])(xit|xtest|xdescribe|fdescribe)\s*\('
+        - '@pytest\.mark\.(skip|skipif|xfail)\b'
+        - '\bpytest\.(skip|xfail)\s*\('
+        - '@unittest\.(skip|skipIf|skipUnless|expectedFailure)\b'
+        - '\bself\.skipTest\s*\('
+        - '\bt\.Skip(Now|f)?\s*\('
+        - '@(Disabled|Ignore)\b'
+        - '\bmarkTestSkipped\s*\('
+    actions: [write]
+    decision: require_approval
+    reason: change skips, ignores or focuses tests
+
   - id: approve-large-lockfile-changes
     match:
       paths:

@@ -99,6 +99,22 @@ loop for you and enforces your rules along the way.
   force pushes, `reset --hard`, `terraform destroy`…, and asks you before
   migrations, infrastructure, CI changes, pushes and PRs. Checked before the
   orchestrator runs anything *and* on the diff of whatever the agents wrote.
+  Claude agents get a `PreToolUse` hook, so a denied command or secret write
+  is blocked *before* it runs.
+- **Agents can't quietly weaken the checks.** Edits to `CLAUDE.md`,
+  `AGENTS.md`, `.claude/`, the orchestrator's own policy, deleted tests,
+  test-runner config, newly added `skip`/`#[ignore]`, and a retry that only
+  touched tests after a failure all stop for your approval. `--scope
+  'src/webhooks/**'` flags anything outside the task.
+- **From an ADR to verified work.** An agent turns an Architecture Decision
+  Record into small tasks with acceptance criteria and dependencies; you
+  accept, edit or reject; each task is checked criterion by criterion, and
+  the whole epic against the ADR.
+- **Tokens per task.** Claude and Codex usage in panes is read from their own
+  local session logs; `usage`, the dashboard and `run show` show it per task
+  and step, and `limits.max_tokens` asks before a run goes over budget.
+- **After the PR.** Failing CI and review comments become a follow-up on the
+  same branch with one key (`F`).
 - **Approvals with context.** Changed files, diff stats, checks, the policy rule
   that fired and exactly what will happen when you say yes.
 - **Tournament mode.** Run a task ×3 (`codex, codex, claude`), compare the diffs,
@@ -188,9 +204,24 @@ without asking me.
 | `implement-review` | Codex implements → tests (2 retries with feedback) → Claude reviews → your approval → draft PR |
 | `secure-change` | implement → tests → lint → security scan → gated security review → policy gate → approval → draft PR |
 | `variant-review` | for `--variants N`: implement → tests → review in every variant; you compare and choose |
+| `dual-review` | Codex implements → tests → Claude review (gated) → Codex review (gated) → approval → draft PR |
+| `epic-task` | used for tasks accepted from an ADR plan: implement → tests → plan checks → acceptance review per criterion (gated) → approval → draft PR |
 
 Workflows are short YAML files; add your own in `.ai/herdr-orchestrator/workflows/`.
 See [WORKFLOWS](docs/WORKFLOWS.md) and the [example project](examples/).
+
+## From an ADR to merged work
+
+```sh
+herdr-orchestrator epic create --from docs/adr/0007-rate-limiting.md   # read-only planner
+herdr-orchestrator epic show E1          # tasks, dependencies, acceptance criteria, commands
+herdr-orchestrator epic accept E1        # or --only T1,T2 · epic replan E1 --feedback "…"
+herdr-orchestrator usage                 # tokens per task while it runs
+herdr-orchestrator epic verify E1        # result vs. the ADR; gaps become proposed follow-ups
+```
+
+Tasks start when their dependencies are merged (or stacked on their branch
+with `epic.dependency_mode: stacked`). In the pane: `e` for epics.
 
 ## Questions
 
@@ -236,8 +267,9 @@ logs). `herdr-orchestrator config paths` prints every location.
 
 | Screen | Keys |
 | --- | --- |
-| Dashboard | `n` new task · `enter` inspect · `a` approvals · `r` retry · `x` cancel · `d` diff · `f` focus agent pane · `p` pause queue · `q` quit |
-| Run detail | `↑↓` step · `enter`/`l` log · `d` diff · `f` focus agent · `a` approval · `r` retry · `x` cancel · `esc` back |
+| Dashboard | `n` new task · `enter` inspect · `a` approvals · `e` epics · `r` retry · `x` cancel · `d` diff · `f` focus agent pane · `F` PR follow-up · `p` pause queue · `q` quit |
+| Run detail | `↑↓` step · `enter`/`l` log · `d` diff · `f` focus agent · `a` approval · `F` PR follow-up · `r` retry · `x` cancel · `esc` back |
+| Epics | `↑↓` select · `enter` plan · `y` accept open tasks · `n` reject · `g` re-plan · `v` verify against the ADR · `esc` back |
 | Approval | `y` approve once · `n` deny · `c` cancel run · `d` diff · `f` open agent pane · `esc` back |
 | New task | `tab` next field · `←→` choose · `ctrl+s` create · `esc` cancel |
 
@@ -259,6 +291,14 @@ herdr-orchestrator run retry '#1' [--from-step tests] | run cancel '#1' | run pr
 herdr-orchestrator approval list | approval show <id> | approval approve <id> --note "ok"
 herdr-orchestrator policy check --command "git push -f origin main"   # DENY, exit 3
 herdr-orchestrator audit verify --all
+herdr-orchestrator usage [--task 12]                               # tokens per task
+herdr-orchestrator task create "Fix webhooks" --scope 'src/webhooks/**'   # ask about anything else
+herdr-orchestrator adr list | epic create --from docs/adr/0007-x.md | epic show E1
+herdr-orchestrator epic accept E1 --only T1,T2 | epic reject | epic replan | epic edit | epic verify
+herdr-orchestrator task unblock 14                                 # start despite dependencies
+herdr-orchestrator run followup '#12'                              # PR comments + failing CI → follow-up
+herdr-orchestrator gc [--yes]                                      # remove merged/closed worktrees
+herdr-orchestrator stats                                           # per runner: success, retries, tokens
 herdr-orchestrator doctor
 herdr-orchestrator task create "smoke" --runner fake-success --foreground   # CI, no daemon
 ```

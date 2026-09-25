@@ -264,6 +264,7 @@ impl<'a> RunDriver<'a> {
         if let Some(fb) = &self.run.pending_feedback {
             c.set("feedback", format!("Feedback from the previous attempt:\n\n{fb}"));
         }
+        c.set("acceptance", self.task.acceptance_text());
         // previous.output = output of the step immediately before this one.
         if let Some(idx) = self.wf.step_index(step_id) {
             if idx > 0 {
@@ -370,6 +371,7 @@ impl<'a> RunDriver<'a> {
                     // Feedback is consumed by the step that received it.
                     if self.run.pending_feedback.is_some() && step.kind() == StepKind::Agent {
                         self.run.pending_feedback = None;
+                        self.run.pending_feedback_step = None;
                     }
                     self.run.cursor += 1;
                     self.save()?;
@@ -435,6 +437,7 @@ impl<'a> RunDriver<'a> {
                 self.run.pending_feedback = of.feedback.then(|| {
                     format!("The `{}` step failed: {reason}\n\n{feedback}", step.id)
                 });
+                self.run.pending_feedback_step = Some(step.id.clone());
                 self.run.cursor = target;
                 self.save()?;
                 self.audit(
@@ -501,7 +504,11 @@ impl<'a> RunDriver<'a> {
         if self.cfg.config.git.manage_exclude && crate::git::ensure_excluded(&repo)? {
             self.audit("git_exclude_updated", Actor::orchestrator(), None, serde_json::json!({"entry": "/.herdr-orchestrator/"}));
         }
-        let outcome = crate::git::add_worktree(&repo, &path, &branch, &base_sha)?;
+        let outcome = if self.task.options.continue_run.is_some() {
+            crate::git::attach_worktree(&repo, &path, &branch)?
+        } else {
+            crate::git::add_worktree(&repo, &path, &branch, &base_sha)?
+        };
         self.run.git.head_sha = crate::git::head_sha(&path).ok();
         self.run.git.dirty = Some(false);
         self.save()?;

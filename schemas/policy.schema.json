@@ -178,6 +178,11 @@
               "min_files_changed": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "added_lines": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Regular expressions matched against the lines a change adds (diff gate write subjects only)."
               }
             }
           }

@@ -2,7 +2,9 @@
 //! the scheduler and dry-run planning.
 
 pub mod driver;
+pub mod followup;
 pub mod handoff;
+pub mod maintenance;
 pub mod plan;
 pub mod scheduler;
 mod steps;
@@ -148,6 +150,10 @@ pub struct NewTask {
     pub options: TaskOptions,
     pub via: String,
     pub source: Option<TaskSource>,
+    pub epic: Option<EpicLink>,
+    pub depends_on: Vec<String>,
+    pub acceptance: Vec<String>,
+    pub manual_checks: Vec<String>,
 }
 
 fn derive_title(text: &str) -> String {
@@ -202,6 +208,9 @@ pub fn create_task(ctx: &EngineCtx, nt: NewTask) -> Result<Task> {
     if let Some(b) = &nt.options.base_ref {
         crate::git::rev_parse(&repo, b)?;
     }
+    for g in &nt.options.scope {
+        globset::Glob::new(g).with_context(|| format!("invalid --scope glob {g:?}"))?;
+    }
     let n = ctx.store.next_task_number()?;
     let now = now();
     let task = Task {
@@ -217,6 +226,11 @@ pub fn create_task(ctx: &EngineCtx, nt: NewTask) -> Result<Task> {
         selected_run: None,
         created_at: now,
         updated_at: now,
+        epic: nt.epic.clone(),
+        depends_on: nt.depends_on.clone(),
+        acceptance: nt.acceptance.clone(),
+        manual_checks: nt.manual_checks.clone(),
+        waiting_on: None,
     };
     ctx.store.save_task(&task)?;
     ctx.audit(
@@ -253,8 +267,31 @@ pub fn runner_factory(ctx: &EngineCtx, cfg: &LoadedConfig) -> crate::runners::Ru
 pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
     let cfg = ctx.load_config(Some(&task.repo_root))?;
     let wf_name = task.options.workflow.clone().unwrap_or_else(|| cfg.config.defaults.workflow.clone());
-    let (wf, src) = ctx.catalog(Some(&task.repo_root)).workflow(&wf_name)?;
+    let (wf, mut src) = ctx.catalog(Some(&task.repo_root)).workflow(&wf_name)?;
+    // Verification the human accepted with an epic plan: extra check steps.
+    let wf = match augment_with_checks(&wf, &task.options.extra_checks, &task.options.extra_commands)? {
+        Some(w) => {
+            src.yaml = format!("# {} + verification from the accepted plan\n{}", wf.name, serde_yaml_ng::to_string(&w)?);
+            Workflow::parse(&src.yaml).context("augmented workflow is invalid")?
+        }
+        None => wf,
+    };
     let base_ref = crate::git::default_base(&task.repo_root, task.options.base_ref.as_deref().or(cfg.config.defaults.base_branch.as_deref()))?;
+    // A follow-up continues an existing run's branch and worktree.
+    let continued = match &task.options.continue_run {
+        Some(id) => {
+            let prev = ctx.store.load_run(id)?;
+            if !prev.status.is_terminal() {
+                bail!("run {} is still {}", prev.display_name(), prev.status.as_str());
+            }
+            let busy = ctx.store.list_runs()?.into_iter().find(|r| !r.status.is_terminal() && r.git.worktree_path.is_some() && r.git.worktree_path == prev.git.worktree_path);
+            if let Some(b) = busy {
+                bail!("worktree of {} is in use by {}", prev.display_name(), b.display_name());
+            }
+            Some(prev)
+        }
+        None => None,
+    };
     let mut runs = vec![];
     let variants = task.options.variants.max(1);
     let first_agent = wf.steps.iter().find(|s| s.kind() == StepKind::Agent).map(|s| s.id.clone());
@@ -274,7 +311,16 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
             workflow_yaml: src.yaml.clone(),
             runner_override: task.options.runner.clone(),
             repo_root: task.repo_root.clone(),
-            git: GitState { base_ref: base_ref.clone(), ..Default::default() },
+            git: match &continued {
+                Some(p) => GitState {
+                    base_ref: p.git.base_ref.clone(),
+                    base_sha: p.git.base_sha.clone(),
+                    branch: p.git.branch.clone(),
+                    worktree_path: p.git.worktree_path.clone(),
+                    ..Default::default()
+                },
+                None => GitState { base_ref: base_ref.clone(), ..Default::default() },
+            },
             herdr: HerdrBinding::default(),
             status: RunStatus::Pending,
             status_reason: None,
@@ -293,12 +339,14 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
             pr_url: None,
             diff_stat: None,
             pending_feedback: None,
+            pending_feedback_step: None,
             outputs: BTreeMap::new(),
             approved_paths: BTreeMap::new(),
             approval_cover: None,
             step_runners,
             recovered: false,
             selected: false,
+            pr_feedback_seen: None,
         };
         ctx.store.save_run(&run)?;
         runs.push(run);
@@ -309,6 +357,54 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
         Ok(())
     })?;
     Ok(runs)
+}
+
+/// Insert `check` steps for extra named checks and commands before the
+/// first reviewing agent step (or at the end). Failing checks go back to the
+/// first agent step with feedback, like the workflow's own checks.
+pub fn augment_with_checks(wf: &Workflow, checks: &[String], commands: &[Vec<String>]) -> Result<Option<Workflow>> {
+    use crate::workflow::{AgentOutput, OnFailure, Step, StepSpec};
+    let present: Vec<&str> = wf.steps.iter().filter_map(|s| s.named_check()).collect();
+    let checks: Vec<&String> = checks.iter().filter(|c| !present.contains(&c.as_str())).collect();
+    if checks.is_empty() && commands.is_empty() {
+        return Ok(None);
+    }
+    let first_agent = wf.steps.iter().find(|s| s.kind() == StepKind::Agent).map(|s| s.id.clone());
+    let at = wf
+        .steps
+        .iter()
+        .enumerate()
+        .skip_while(|(_, s)| s.kind() != StepKind::Agent)
+        .skip(1)
+        .find(|(_, s)| matches!(s.spec, StepSpec::Agent { output: AgentOutput::Review | AgentOutput::Acceptance, .. } | StepSpec::Approval { .. } | StepSpec::GithubPr { .. }))
+        .map(|(i, _)| i)
+        .unwrap_or(wf.steps.len());
+    let on_failure = first_agent.map(|id| OnFailure { retry_step: id, max_attempts: 2, feedback: true });
+    let mut new_steps = vec![];
+    for (i, c) in checks.iter().enumerate() {
+        new_steps.push(Step {
+            id: format!("plan-{c}-{}", i + 1),
+            spec: StepSpec::Check { check: Some((*c).clone()), command: vec![], shell: false, env: Default::default(), cwd: None },
+            timeout: None,
+            on_failure: on_failure.clone(),
+            continue_on_failure: false,
+            description: Some("verification from the accepted plan".into()),
+        });
+    }
+    for (i, argv) in commands.iter().enumerate() {
+        new_steps.push(Step {
+            id: format!("plan-check-{}", i + 1),
+            spec: StepSpec::Check { check: None, command: argv.clone(), shell: false, env: Default::default(), cwd: None },
+            timeout: None,
+            on_failure: on_failure.clone(),
+            continue_on_failure: false,
+            description: Some("verification command from the accepted plan".into()),
+        });
+    }
+    let mut out = wf.clone();
+    out.steps.splice(at..at, new_steps);
+    out.validate()?;
+    Ok(Some(out))
 }
 
 /// Recompute a task's status from its runs.
@@ -396,7 +492,7 @@ pub fn compose_prompt(
     attempt: u32,
     worktree: &Path,
     output_file: &Path,
-    review: bool,
+    output: crate::workflow::AgentOutput,
 ) -> String {
     let mut p = String::new();
     if let Some(s) = skill {
@@ -405,18 +501,42 @@ pub fn compose_prompt(
     }
     p.push_str(body.trim());
     p.push_str("\n\n---\n\n");
-    p.push_str(&orchestrator_instructions(run, step_id, attempt, worktree, output_file, review));
+    p.push_str(&orchestrator_instructions(run, step_id, attempt, worktree, output_file, output));
     p
 }
 
-pub fn orchestrator_instructions(run: &Run, step_id: &str, attempt: u32, worktree: &Path, output_file: &Path, review: bool) -> String {
-    let format = if review {
-        r#"{"verdict": "approved" | "changes_requested" | "rejected",
+pub fn orchestrator_instructions(run: &Run, step_id: &str, attempt: u32, worktree: &Path, output_file: &Path, output: crate::workflow::AgentOutput) -> String {
+    use crate::workflow::AgentOutput;
+    let format = match output {
+        AgentOutput::Review => {
+            r#"{"verdict": "approved" | "changes_requested" | "rejected",
  "summary": "<one paragraph>",
  "findings": [{"severity": "critical|high|medium|low|info", "file": "<path>", "line": <number or null>,
                "description": "<what is wrong>", "recommendation": "<how to fix>"}]}"#
-    } else {
-        r#"{"summary": "<what you changed and why>", "status": "done" | "blocked", "notes": "<optional>"}"#
+        }
+        AgentOutput::Plan => {
+            r#"{"decision_summary": "<the ADR's decision in two sentences>",
+ "tasks": [{"key": "T1", "title": "<short imperative title>", "description": "<what to do and where>",
+            "acceptance": ["<criterion a reviewer can check against code and tests>", "..."],
+            "verification": {"checks": ["tests" | "lint" | "security"], "commands": [["<argv>", "..."]], "manual": ["<only what a human can check>"]},
+            "depends_on": ["<keys of tasks that must land first>"], "adr_refs": ["<section of the ADR>"],
+            "scope": ["<path globs this task will change, e.g. src/webhooks/**>"], "risk": "low" | "medium" | "high"}],
+ "out_of_scope": ["<what the ADR defers or excludes>"],
+ "open_questions": ["<questions a human must answer>"]}"#
+        }
+        AgentOutput::Acceptance => {
+            r#"{"criteria": [{"index": <1-based number of the criterion>, "status": "met" | "not_met" | "unverifiable",
+               "evidence": "<test name, file:line, or command and its result>"}],
+ "verdict": "approved" | "changes_requested",
+ "summary": "<one paragraph>"}"#
+        }
+        AgentOutput::Conformance => {
+            r#"{"summary": "<one paragraph>",
+ "points": [{"point": "<one statement from the ADR's Decision or Consequences>", "status": "covered" | "partial" | "missing",
+             "evidence": "<files, tests or PRs that show it>"}],
+ "followups": [<a task object in the same format as a plan task, for each gap; key F1, F2, ...>]}"#
+        }
+        AgentOutput::Summary => r#"{"summary": "<what you changed and why>", "status": "done" | "blocked", "notes": "<optional>"}"#,
     };
     format!(
         "Orchestrator instructions (herdr-orchestrator run {run} step `{step}`, attempt {attempt}):\n\

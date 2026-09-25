@@ -84,12 +84,19 @@ impl Scheduler {
                 })?;
             }
         }
+        if let Err(e) = crate::epic::engine::sync(&self.ctx) {
+            tracing::warn!("epic sync failed: {e:#}");
+        }
         let paused = self.ctx.store.load_scheduler()?.paused;
         if paused {
             return Ok(rep);
         }
-        // 3. claim queued tasks (FIFO)
+        // 3. claim queued tasks (FIFO) whose dependencies are done
         for task in self.ctx.store.list_tasks()? {
+            let waiting = matches!(task.status, TaskStatus::Queued | TaskStatus::Blocked) && task.run_ids.is_empty() && !task.depends_on.is_empty();
+            if waiting && !self.dependencies_ready(&task)? {
+                continue;
+            }
             if task.status == TaskStatus::Queued && task.run_ids.is_empty() {
                 // Claim under a lock and re-check: a foreground CLI and the
                 // daemon may both be scheduling.
@@ -126,6 +133,36 @@ impl Scheduler {
             rep.started_runs.push(run.run_id.clone());
         }
         Ok(rep)
+    }
+
+    /// Apply the dependency state of a not-yet-started task. Returns `true`
+    /// when it may start now (its base may have been set for stacking).
+    fn dependencies_ready(&self, task: &Task) -> Result<bool> {
+        use crate::epic::engine::DepState;
+        let state = match crate::epic::engine::dependency_state(&self.ctx, task) {
+            Ok(s) => s,
+            Err(e) => DepState::Waiting(format!("cannot check dependencies: {e:#}")),
+        };
+        let (status, waiting_on, base) = match &state {
+            DepState::Ready(base) => (TaskStatus::Queued, None, base.clone()),
+            DepState::Waiting(why) => (TaskStatus::Queued, Some(why.clone()), None),
+            DepState::Blocked(why) => (TaskStatus::Blocked, Some(why.clone()), None),
+        };
+        if task.status != status || task.waiting_on != waiting_on || base.is_some() {
+            let _ = self.ctx.store.update_task(&task.task_id, |t| {
+                t.status = status;
+                t.waiting_on = waiting_on.clone();
+                if let Some(b) = &base {
+                    t.options.base_ref = Some(b.clone());
+                }
+                Ok(())
+            });
+            if task.status != status {
+                let ev = if status == TaskStatus::Blocked { "task_blocked_by_dependency" } else { "task_unblocked" };
+                self.ctx.audit(EventDraft::new(ev, Actor::orchestrator()).task(&task.task_id).data(serde_json::json!({"reason": waiting_on})));
+            }
+        }
+        Ok(matches!(state, DepState::Ready(_)))
     }
 
     fn spawn(&mut self, run_id: &str) {

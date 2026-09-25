@@ -117,13 +117,16 @@
               "output": {
                 "enum": [
                   "summary",
-                  "review"
+                  "review",
+                  "plan",
+                  "acceptance",
+                  "conformance"
                 ],
                 "default": "summary"
               },
               "gate": {
                 "type": "boolean",
-                "description": "review only: non-approving verdict fails the step"
+                "description": "review: a non-approving verdict fails the step; acceptance: any not_met criterion fails the step"
               },
               "commit": {
                 "type": "boolean"

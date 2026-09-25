@@ -52,8 +52,8 @@ Herdr pane (see [RUNNERS.md](RUNNERS.md)).
 | `prompt` | required | Prompt template. |
 | `runner` | see *Runner precedence* | `claude`, `codex`, `opencode`, `fake-success`, custom… |
 | `skill` | none | Markdown skill prepended to the prompt. |
-| `output` | `summary` | `summary` (free text / `{"summary": …}`) or `review` (validated verdict JSON). |
-| `gate` | `false` | With `output: review`: a verdict other than `approved` (or unparseable output) fails the step, so `on_failure` can send the findings back to the implementer. `gate: true` without `output: review` is rejected. |
+| `output` | `summary` | `summary` (free text / `{"summary": …}`), `review` (validated verdict JSON), `acceptance` (a judgement per acceptance criterion), `plan` (an ADR task plan; read-only) or `conformance` (epic vs. ADR; read-only). |
+| `gate` | `false` | With `output: review`: a verdict other than `approved` (or unparseable output) fails the step; with `output: acceptance`: any `not_met` criterion fails it — so `on_failure` can send the findings back to the implementer. Allowed only with `review` and `acceptance`. |
 | `commit` | `git.auto_commit` (true) | Commit worktree changes after the step (hooks disabled, `.herdr-orchestrator/` never committed). |
 | `policy_check` | `true` | Evaluate the worktree diff against policy after the step. |
 
@@ -105,6 +105,28 @@ array; each finding needs a known `severity` and a string `description`;
 the execution's `structured` output and a `review_completed` event records
 the verdict. If validation fails the raw output is kept, `parse_failed` is
 set, and — only when `gate: true` — the step fails.
+
+For `output: acceptance` (the task's criteria are in `{{acceptance}}`):
+
+```json
+{"criteria": [{"index": 1, "status": "met" | "not_met" | "unverifiable",
+               "evidence": "<test name, file:line, or command and its result>"}],
+ "verdict": "approved" | "changes_requested",
+ "summary": "<one paragraph>"}
+```
+
+Every criterion `1..=N` of the task must be judged exactly once, and
+`approved` with a `not_met` criterion is rejected. With `gate: true`, unmet
+criteria (with the reviewer's evidence) become the implementer's
+`{{feedback}}`. `unverifiable` is not a failure: it is shown in the
+approval screen for a human. Audited as `acceptance_verified`.
+
+`output: plan` and `output: conformance` are used by the epic workflows
+(see *Epics* below). Both are **read-only**: if the worktree is dirty or
+HEAD moved after the step, the step fails and the run is `blocked`
+(`read_only_violation`). A `plan`, `acceptance` or `conformance` result
+that cannot be validated always fails the step (with or without `gate`),
+and the validation errors are the retry feedback.
 
 ### `command`
 
@@ -292,6 +314,7 @@ re-expanded.
 | `{{previous.output}}` | Output of the step immediately before | no |
 | `{{step.<id>.output}}` | Output of an earlier step `<id>` (≤ 8 KiB) | no |
 | `{{feedback}}` | Retry feedback, empty on a first attempt | no |
+| `{{acceptance}}` | The task's numbered acceptance criteria (epic tasks), empty otherwise | no |
 
 Trust rules (enforced by `workflow validate` and at load):
 
@@ -352,7 +375,7 @@ Skills (`skill: name` → `name.md`, names `[A-Za-z0-9_-]`, ≤ 64 chars, files
 1. `<repo>/.ai/herdr-orchestrator/skills/`
 2. `<repo>/.ai/skills/` (Cezar-compatible location)
 3. `$HERDR_PLUGIN_CONFIG_DIR/skills/`
-4. built-in: `implementation`, `code-review`, `security-review`
+4. built-in: `implementation`, `code-review`, `security-review`, `acceptance-review`, `adr-planning`, `adr-conformance`
 
 Skills and repository files are *instructions to agents*; treat skills from
 untrusted repositories with the same suspicion as the code
@@ -401,6 +424,85 @@ task ────┼─► variant B: implement → tests → review ─┼─�
 Each variant has its own branch (`herdr/<n>-<slug>-va`, `-vb`, …),
 worktree, logs and audit trail. Reviews give structured findings; nothing
 picks a winner automatically.
+
+### `dual-review`
+
+```text
+implement (codex) ──► tests (retry ×2) ──► review-claude (gated, retry ×2)
+      ▲                                        │ findings
+      └────────────────────────────────────────┤
+                                       review-codex (gated, retry ×1)
+──► approval ──► pr (draft)
+```
+
+Two independent reviewers from different providers, one after the other:
+the second sees the code only after the first approves. (A `parallel` step
+type is still not supported.)
+
+### `epic-task`
+
+The default workflow for tasks accepted from an epic plan.
+
+```text
+implement ──► tests (retry ×2) ──► [plan checks] ──► acceptance (claude, gated, retry ×2)
+    ▲                                                   │ unmet criteria
+    └───────────────────────────────────────────────────┘
+──► approval (shows the criteria table and manual checks) ──► pr (draft)
+```
+
+Verification from the accepted plan is inserted as `check` steps before the
+first reviewing step (`plan-<check>-N` for named checks not already in the
+workflow, `plan-check-N` for commands), retrying the first agent step with
+feedback. The run's workflow snapshot records the augmented YAML.
+
+### `epic-plan`, `epic-conformance` (internal)
+
+Used by `epic create` / `epic replan` and `epic verify`: one read-only agent
+step each (`output: plan` with skill `adr-planning`, `output: conformance`
+with skill `adr-conformance`), `commit: false`, retried with the validation
+errors as feedback.
+
+## Epics
+
+```bash
+herdr-orchestrator adr list                                   # ADRs, status, epic, drift
+herdr-orchestrator epic create --from docs/adr/0007-rate-limiting.md [--runner claude]
+herdr-orchestrator epic show E1                               # plan, dependencies, criteria, commands
+herdr-orchestrator epic accept E1 [--only T1,T2] [--step-runner acceptance=claude]
+herdr-orchestrator epic reject E1 [--only T3] | epic replan E1 --feedback "…" | epic edit E1
+herdr-orchestrator epic verify E1                             # conformance review → proposed F1, F2…
+```
+
+- **Planning** (`epic create`, directory → one epic per active ADR without
+  one): a read-only agent returns a plan — tasks with `key`, `title`,
+  `description`, `acceptance` (≥ 1), `verification` (`checks`, `commands`
+  as argv, `manual`), `depends_on`, `adr_refs`, `scope` globs, optional
+  `workflow` and `risk`; plus `out_of_scope` and `open_questions`.
+  Validation: unique keys, known dependencies, no cycles, at most
+  `epic.max_tasks` (default 12), known workflow and check names, commands
+  without templates. A plan is never partly accepted.
+- **Accepting** creates tasks in dependency order with the plan's scope
+  (`task-scope` approval for changes outside it), acceptance criteria,
+  manual checks and extra checks; runner options apply to all of them.
+  Accepting is how you approve the plan's commands; they are still
+  policy-checked when they run. Dependencies of an accepted key must be
+  accepted too.
+- **Dependencies** (`epic.dependency_mode`): `merged` waits until the
+  dependency's commits are in the base branch (local check; merge the PR
+  and update the local branch). `stacked` branches from the single unmerged
+  dependency and its PR targets that branch. A failed or cancelled
+  dependency marks the dependent `blocked`; `task unblock <id>` starts it
+  anyway. The dashboard shows why a queued task waits.
+- **Conformance** (`epic verify`): a read-only agent starts from the base
+  branch, gets the ADR and the list of task branches and PRs, marks each
+  Decision/Consequences statement `covered`/`partial`/`missing`, and
+  proposes follow-ups, which become open plan tasks `F1…`.
+- **Drift**: the ADR hash is stored; `adr list`, `epic list/show` say when
+  the ADR changed. `epic replan` plans again with the current text; accepted
+  tasks keep their keys.
+
+In the pane: `e` opens the Epics screen (`enter` plan, `y` accept open
+tasks, `n` reject, `g` re-plan, `v` verify).
 
 ## Validation
 

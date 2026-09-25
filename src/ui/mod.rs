@@ -29,12 +29,16 @@ pub enum Screen {
     NewTask,
     /// Live view of an agent that is waiting for a human; keys are forwarded.
     Agent(String),
+    /// ADR epics.
+    Epics,
+    EpicDetail { id: String, scroll: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pending {
     CancelRun(String),
     Deny(String),
+    RejectEpic(String),
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +64,11 @@ pub struct State {
     pub tasks: Vec<Task>,
     pub runs: Vec<Run>,
     pub approvals: Vec<ApprovalRequest>,
+    pub epics: Vec<crate::epic::Epic>,
+    /// Pre-rendered lines of the epic shown on the EpicDetail screen.
+    pub epic_lines: Vec<String>,
+    /// Pre-rendered one-line summaries for the Epics screen.
+    pub epic_rows: Vec<String>,
     pub selected: usize,
     pub message: Option<(String, Instant)>,
     pub confirm: Option<Pending>,
@@ -80,6 +89,9 @@ impl State {
             tasks: vec![],
             runs: vec![],
             approvals: vec![],
+            epics: vec![],
+            epic_lines: vec![],
+            epic_rows: vec![],
             selected: 0,
             message: None,
             confirm: None,
@@ -133,6 +145,7 @@ impl State {
             Screen::Dashboard => self.dashboard_runs().len(),
             Screen::Approvals => self.pending_approvals().len(),
             Screen::RunDetail(id) => self.run(id).map(|r| r.steps.len()).unwrap_or(0),
+            Screen::Epics => self.epics.len(),
             _ => 0,
         }
     }
@@ -156,6 +169,19 @@ fn load(state: &mut State, ctx: &crate::engine::EngineCtx) {
     }
     if let Ok(a) = ctx.store.list_approvals() {
         state.approvals = a;
+    }
+    if matches!(state.screen, Screen::Epics | Screen::EpicDetail { .. }) {
+        let _ = crate::epic::engine::sync(ctx);
+        if let Ok(e) = ctx.store.list_epics() {
+            state.epic_rows = e.iter().map(|x| crate::cli::epic_line(ctx, x)).collect();
+            state.epics = e;
+        }
+        if let Screen::EpicDetail { id, .. } = &state.screen {
+            state.epic_lines = match ctx.store.load_epic(id) {
+                Ok(e) => crate::cli::epic_detail(ctx, &e).lines().map(String::from).collect(),
+                Err(e) => vec![format!("{e:#}")],
+            };
+        }
     }
     state.paused = ctx.store.load_scheduler().map(|s| s.paused).unwrap_or(false);
     if let Screen::Agent(id) = &state.screen {
@@ -321,6 +347,10 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
                     }
                     Err(e) => state.flash(format!("{e:#}")),
                 },
+                Pending::RejectEpic(id) => match crate::epic::engine::reject(ctx, &id, None, Some("rejected from orchestrator pane".into()), user) {
+                    Ok(e) => state.flash(format!("epic {} {}", e.epic_id, e.status.as_str())),
+                    Err(e) => state.flash(format!("{e:#}")),
+                },
                 Pending::Deny(id) => match crate::approvals::decide(&ctx.store, &id, false, user, None) {
                     Ok(_) => {
                         crate::daemon::nudge(&ctx.store.layout);
@@ -362,6 +392,9 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
     }
     if let Screen::Agent(id) = state.screen.clone() {
         return agent_key(app, state, &id, k, ctx);
+    }
+    if matches!(state.screen, Screen::Epics | Screen::EpicDetail { .. }) {
+        return epic_key(ctx, state, k);
     }
     match k.code {
         KeyCode::Down | KeyCode::Char('j') => {
@@ -488,6 +521,24 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
                 state.flash(m);
             }
         }
+        KeyCode::Char('e') if matches!(state.screen, Screen::Dashboard) => {
+            state.screen = Screen::Epics;
+            state.selected = 0;
+            load(state, ctx);
+        }
+        KeyCode::Char('F') => {
+            if let Some(r) = selected_run(state) {
+                match crate::engine::followup::pr_followup(ctx, &r.run_id, None, None, "ui") {
+                    Ok(t) => {
+                        let _ = crate::daemon::ensure(&ctx.store.layout, &[]);
+                        crate::daemon::nudge(&ctx.store.layout);
+                        state.flash(format!("queued follow-up #{} for {}", t.task_id, r.display_name()));
+                    }
+                    Err(e) => state.flash(format!("{e:#}")),
+                }
+                load(state, ctx);
+            }
+        }
         KeyCode::Char('p') if matches!(state.screen, Screen::Dashboard) => {
             let paused = !state.paused;
             ctx.store.save_scheduler(&crate::store::SchedulerState { paused })?;
@@ -497,6 +548,83 @@ pub fn handle_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut Stat
         }
         _ => {}
     }
+    Ok(false)
+}
+
+/// Epics list and detail: accept, reject, verify, re-plan.
+fn epic_key(ctx: &crate::engine::EngineCtx, state: &mut State, k: KeyEvent) -> Result<bool> {
+    let user = std::env::var("USER").ok();
+    let current = match &state.screen {
+        Screen::EpicDetail { id, .. } => Some(id.clone()),
+        Screen::Epics => state.epics.get(state.selected).map(|e| e.epic_id.clone()),
+        _ => None,
+    };
+    match k.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.screen = if matches!(state.screen, Screen::EpicDetail { .. }) { Screen::Epics } else { Screen::Dashboard };
+            state.selected = 0;
+        }
+        KeyCode::Down | KeyCode::Char('j') => match &mut state.screen {
+            Screen::EpicDetail { scroll, .. } => *scroll = (*scroll + 1).min(state.epic_lines.len().saturating_sub(1)),
+            _ => {
+                state.selected += 1;
+                state.clamp();
+            }
+        },
+        KeyCode::Up | KeyCode::Char('k') => match &mut state.screen {
+            Screen::EpicDetail { scroll, .. } => *scroll = scroll.saturating_sub(1),
+            _ => state.selected = state.selected.saturating_sub(1),
+        },
+        KeyCode::Enter if matches!(state.screen, Screen::Epics) => {
+            if let Some(id) = current {
+                state.screen = Screen::EpicDetail { id, scroll: 0 };
+            }
+        }
+        KeyCode::Char('y') => {
+            if let Some(id) = current {
+                let o = crate::epic::engine::AcceptOptions { user, via: "ui".into(), ..Default::default() };
+                match crate::epic::engine::accept(ctx, &id, o) {
+                    Ok(e) => {
+                        let _ = crate::daemon::ensure(&ctx.store.layout, &[]);
+                        crate::daemon::nudge(&ctx.store.layout);
+                        state.flash(format!("epic {}: {} task(s) queued", e.epic_id, e.tasks.len()));
+                    }
+                    Err(e) => state.flash(format!("{e:#}")),
+                }
+            }
+        }
+        KeyCode::Char('n') => {
+            if let Some(id) = current {
+                state.confirm = Some(Pending::RejectEpic(id));
+            }
+        }
+        KeyCode::Char('v') => {
+            if let Some(id) = current {
+                match crate::epic::engine::verify(ctx, &id, "ui") {
+                    Ok(e) => {
+                        let _ = crate::daemon::ensure(&ctx.store.layout, &[]);
+                        crate::daemon::nudge(&ctx.store.layout);
+                        state.flash(format!("epic {}: conformance review queued", e.epic_id));
+                    }
+                    Err(e) => state.flash(format!("{e:#}")),
+                }
+            }
+        }
+        KeyCode::Char('g') => {
+            if let Some(id) = current {
+                match crate::epic::engine::replan(ctx, &id, None, "ui") {
+                    Ok(e) => {
+                        let _ = crate::daemon::ensure(&ctx.store.layout, &[]);
+                        crate::daemon::nudge(&ctx.store.layout);
+                        state.flash(format!("epic {}: planning again (feedback: `epic replan --feedback`)", e.epic_id));
+                    }
+                    Err(e) => state.flash(format!("{e:#}")),
+                }
+            }
+        }
+        _ => {}
+    }
+    load(state, ctx);
     Ok(false)
 }
 
@@ -576,7 +704,7 @@ fn form_key(app: &CliApp, ctx: &crate::engine::EngineCtx, state: &mut State, k: 
             variants: f.variants,
             ..Default::default()
         };
-        let nt = crate::engine::NewTask { text: f.text.clone(), title: None, repo, options: opts, via: "ui".into(), source: None };
+        let nt = crate::engine::NewTask { text: f.text.clone(), title: None, repo, options: opts, via: "ui".into(), source: None, ..Default::default() };
         match crate::engine::create_task(ctx, nt) {
             Ok(t) => {
                 let _ = crate::daemon::ensure(&ctx.store.layout, &[]);

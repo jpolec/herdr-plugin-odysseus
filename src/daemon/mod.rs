@@ -64,7 +64,16 @@ pub fn run(ctx: Arc<EngineCtx>, opts: DaemonOptions) -> Result<()> {
     let global = ctx.load_config(None)?;
     let mut sched = Scheduler::new(ctx.clone(), global.config.scheduler.max_parallel_runs);
     let mut idle_since: Option<Instant> = None;
+    let mut last_watch: Option<Instant> = None;
     loop {
+        if global.config.github.watch_prs && last_watch.is_none_or(|t| t.elapsed() >= global.config.github.watch_interval.as_duration()) {
+            last_watch = Some(Instant::now());
+            match crate::engine::followup::watch_prs(&ctx, 14) {
+                Ok(v) if !v.is_empty() => tracing::info!("PR feedback on {} run(s)", v.len()),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("PR watch failed: {e:#}"),
+            }
+        }
         match sched.tick() {
             Ok(rep) => {
                 for id in &rep.started_runs {
@@ -75,7 +84,8 @@ pub fn run(ctx: Arc<EngineCtx>, opts: DaemonOptions) -> Result<()> {
         }
         if sched.is_idle().unwrap_or(false) {
             let since = *idle_since.get_or_insert_with(Instant::now);
-            if opts.idle_exit.is_some_and(|d| since.elapsed() >= d) && no_pending_approvals(&ctx) {
+            // The PR watcher is a reason to stay up.
+            if opts.idle_exit.is_some_and(|d| since.elapsed() >= d) && no_pending_approvals(&ctx) && !global.config.github.watch_prs {
                 tracing::info!("idle; daemon exiting");
                 break;
             }

@@ -20,6 +20,12 @@ pub enum HookCmd {
     },
     /// Action: open the new-task popup.
     NewTask,
+    /// Claude Code `PreToolUse` hook (registered via `--settings` when the
+    /// orchestrator starts Claude): policy check before each tool call.
+    ClaudePretool {
+        #[arg(long)]
+        run: String,
+    },
     /// Action (opt-in): symlink the CLI into ~/.local/bin.
     InstallCli {
         /// Target directory (default: ~/.local/bin).
@@ -60,6 +66,16 @@ pub fn run(app: &App, h: HookCmd) -> Result<i32> {
             super::open_plugin_pane("new-task", "popup", None)?;
             Ok(0)
         }
+        HookCmd::ClaudePretool { run } => {
+            // Never fail the agent's tool call because of us: any internal
+            // error means "no decision" (the diff gate still applies).
+            match claude_pretool(app, &run) {
+                Ok(Some(out)) => println!("{out}"),
+                Ok(None) => {}
+                Err(e) => eprintln!("herdr-orchestrator hook: {e:#}"),
+            }
+            Ok(0)
+        }
         HookCmd::InstallCli { dir } => {
             let msg = install_cli(dir)?;
             println!("{msg}");
@@ -71,6 +87,28 @@ pub fn run(app: &App, h: HookCmd) -> Result<i32> {
             Ok(0)
         }
     }
+}
+
+fn claude_pretool(app: &App, run_id: &str) -> Result<Option<serde_json::Value>> {
+    use std::io::Read;
+    let mut raw = String::new();
+    std::io::stdin().take(4 * 1024 * 1024).read_to_string(&mut raw)?;
+    let input: serde_json::Value = serde_json::from_str(&raw)?;
+    let ctx = app.ctx(false)?;
+    let run = ctx.store.load_run(run_id)?;
+    let cfg = ctx.load_config(Some(&run.repo_root))?;
+    let set = ctx.policy_for(&cfg)?;
+    let worktree = run.git.worktree_path.clone().unwrap_or_else(|| run.repo_root.clone());
+    let Some((d, out)) = crate::policies::agent_hook::decide(&set, &input, &worktree) else { return Ok(None) };
+    if d.decision != crate::policies::Decision::Allow {
+        let tool = input.get("tool_name").and_then(|t| t.as_str()).unwrap_or("?");
+        ctx.audit(
+            crate::audit::EventDraft::new("agent_tool_checked", crate::audit::Actor::policy())
+                .run(&run.run_id, &run.task_id)
+                .data(serde_json::json!({"tool": tool, "subject": d.subject, "decision": d.decision.as_str(), "reason": d.reason, "blocked": out.is_some()})),
+        );
+    }
+    Ok(out)
 }
 
 /// Symlink the running binary into `dir` (default `~/.local/bin`). Only

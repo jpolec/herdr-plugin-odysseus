@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.2.0] - 2026-09-25
+
+Guardrails against agents weakening their own checks, token usage for agents in panes, and ADR-driven epics.
+
+### Added
+- **Token usage of pane agents.** Claude and Codex keep local session logs (`~/.claude/projects`, `~/.codex/sessions`, honouring `CLAUDE_CONFIG_DIR` / `CODEX_HOME`). After each agent step the orchestrator reads the step's time window from them: `reported` when Herdr gave the agent's native session id, `estimated` when the log was found by working directory. Read-only and local; cost stays unknown (the logs carry no price). Switch off with `usage.session_logs: false`.
+- Tokens per task and step: `task list`, `task show`, `run list`, `run show` (TOKENS column), the dashboard (per run and per step) and a `Tokens` total in the footer. New `herdr-orchestrator usage [--task N] [--all]` prints input/output/cached tokens per task.
+- **Epics: from an ADR to verified work.** `adr list` finds ADRs (`epic.adr_dirs`; Nygard, MADR and front-matter status). `epic create --from docs/adr/0007-x.md` runs a read-only planning agent (built-in `epic-plan` workflow, `output: plan`); an invalid plan goes back to the planner with the errors, a planner that changes files is stopped. `epic show` lists tasks, dependencies, acceptance criteria, verification commands and open questions; `epic accept [--only T1,T3]`, `epic reject [--only …]`, `epic replan --feedback "…"`, `epic edit` ($EDITOR, validated). Accepted tasks are queued with their dependencies, scope, acceptance criteria and manual checks; the plan's verification commands become check steps (still policy-checked). `epic verify` runs a read-only conformance review against the ADR (`epic-conformance`); gaps become proposed follow-ups `F1…`, accepted like the plan. ADR changes after planning are shown as drift.
+- Task dependencies: `epic.dependency_mode: merged` (default; a dependency counts once its commits are in the base branch, checked locally with `git merge-base --is-ancestor`) or `stacked` (branch from the one unmerged dependency; the PR targets its branch). A failed or cancelled dependency blocks its dependents; `task unblock <id>` overrides. Queued tasks show why they wait.
+- `output: acceptance` with the `acceptance-review` skill: each criterion is `met`, `not_met` or `unverifiable` with evidence; with `gate: true` unmet criteria go back to the implementer. `{{acceptance}}` (untrusted, prompt-only) holds the task's numbered criteria. Approvals and the PR body show the criteria table and the manual checklist.
+- Built-in workflows `epic-task` (implement → tests → gated acceptance review → approval → draft PR) and `dual-review` (Codex implements; Claude and Codex review one after the other, both gated). Skills `adr-planning`, `acceptance-review`, `adr-conformance`.
+- **PR follow-ups.** `run followup <run> [--note …] [--runner …]` (or `F` in the pane) turns failing CI checks and review comments of the run's PR into a task on the same branch and worktree; new commits are pushed to the existing PR (push still needs approval). `github.watch_prs: true` checks open PRs of recent runs every `github.watch_interval` and only notifies; the daemon stays up while it is on.
+- `herdr-orchestrator gc [--yes] [--check-prs] [--failed --days N]`: removes worktrees of finished runs that are merged, closed or superseded by the selected variant. Never a dirty worktree, never a branch.
+- `herdr-orchestrator stats`: per implementing runner and workflow — runs, success rate, attempts, first-review approvals, average tokens and minutes. Local data only.
+- TUI: Epics screen (`e`; `y` accept open tasks, `n` reject, `g` re-plan, `v` verify against the ADR), `F` PR follow-up, acceptance and manual checks on the approval screen.
+- `task create --scope 'src/webhooks/**'` (repeatable): changes outside the declared scope need approval (`task-scope`).
+
+### Changed
+- `limits.max_tokens` and `limits.max_cost_usd` are enforced: when reported or log-read usage of a run exceeds them, the run asks once whether to continue (deny → `blocked`). Unknown usage is still never treated as under budget.
+- Claude agents start with `--settings <worktree>/.herdr-orchestrator/claude-settings.json` (see Security).
+- Follow-up and epic tasks keep the original task's runners; nothing falls back to the default runner silently.
+
+### Fixed
+- `config init` also writes the project `policy.yaml` its sample config refers to; before, the first run failed with "No such file or directory".
+
+### Security
+- New default rules (require approval): `approve-agent-instructions-and-orchestrator-config` (`.ai/herdr-orchestrator/**`, `.ai/skills/**`, `.claude/**`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.codex/**`, `.cursor/**`, `.mcp.json`, …), `approve-test-deletion`, `approve-test-runner-config` (pytest/jest/vitest/coverage settings) and `approve-disabled-tests`.
+- New policy criterion `added_lines`: regular expressions matched against the lines a change adds (diff gate only, read only when a rule uses it). `approve-disabled-tests` uses it to catch added `#[ignore]`, `it.skip`/`.only`, `xit`, `@pytest.mark.skip`/`xfail`, `t.Skip`, `@Disabled`, … — re-enabling a test is never flagged.
+- `guard.test_only_retry` (default on): after a failed check sends feedback to an agent, a new attempt that changed only tests or test configuration (`guard.test_paths`) needs approval (`guard-test-only-retry`).
+- Real-time policy for Claude: a `PreToolUse` hook (`guard.claude_hook`, default on) checks `Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` and `Read` calls against the effective policy before they run; a DENY blocks the call and tells the agent why. Approval-level decisions are left to Claude's own permission mode and the diff gate, so nothing is asked twice. The settings file lives in the git-excluded orchestrator directory, never in the project's `.claude/`.
+
 ## [0.1.9] - 2026-09-23
 
 Fixes from an external code review, each with a regression test that fails on 0.1.8.

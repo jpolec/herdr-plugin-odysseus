@@ -58,20 +58,56 @@ those actions, and neither do we. What we actually do:
 
 This catches *files* an agent wrote, after the fact. It does **not** prevent
 an agent from running `curl`, reading `~/.ssh`, or pushing with its own git
-credentials during its turn if its own permission mode allows it.
+credentials during its turn if its own permission mode allows it — except
+for Claude, see below.
+
+On top of the gate, the diff is checked for changes that weaken the checks
+themselves: agent instruction and orchestrator policy files, deleted tests,
+test runner configuration, added lines that skip or ignore tests
+(`added_lines` rules), a retry that changed only tests after a failed check
+(`guard-test-only-retry`), and paths outside a task's declared scope
+(`task-scope`). All of these ask a human; see POLICY_ENGINE.md.
+
+#### Claude: real-time DENY through its `PreToolUse` hook
+
+With `guard.claude_hook: true` (default) the orchestrator starts Claude
+agents (pane and headless) with
+`--settings <worktree>/.herdr-orchestrator/claude-settings.json`. That file
+(git-excluded, never in the project's `.claude/`; Claude adds `--settings`
+hooks to the user's own) registers
+`herdr-orchestrator hook claude-pretool --run <id>` for the tools `Bash`,
+`Write`, `Edit`, `MultiEdit`, `NotebookEdit` and `Read`. Claude runs it
+before each such call and sends the call on stdin; the hook evaluates it
+against the run's effective policy:
+
+- **DENY** → `permissionDecision: "deny"`: the call does not run, the reason
+  goes to the agent, and `agent_tool_checked` is audited. This applies in
+  every permission mode, including `acceptEdits`.
+- **REQUIRE_APPROVAL / ALLOW** → no decision. Claude's own permission mode
+  decides, and the diff gate still runs, so nothing is asked twice.
+
+What it does **not** cover: other agents (Codex, OpenCode… — still only
+their own sandbox plus the diff gate), Claude tools outside the list above
+(web fetch, MCP tools, subagents' own tool calls follow Claude's hook
+semantics), and anything once a command is running (`Bash` is judged by its
+text and tags, not by what the program then does). The hook runs the
+orchestrator binary with the run's state and config directories. It
+**fails open**: if it cannot load the run or the policy it prints an error
+and makes no decision — the diff gate remains the backstop. Turn it off
+with `guard.claude_hook: false`.
 
 ### What we can observe vs. enforce
 
 | Capability | Orchestrator commands | Agent-internal actions |
 | --- | --- | --- |
-| Block a command before it runs | ✅ policy pre-flight | ❌ (agent's own permission mode only) |
+| Block a command before it runs | ✅ policy pre-flight | ⚠️ Claude: DENY rules via its `PreToolUse` hook; others: agent's own permission mode only |
 | Require human approval before a command | ✅ | ⚠️ agent's own prompt (surfaced as `blocked`) |
 | Detect file writes/deletes | ✅ diff gate | ✅ diff gate, at step boundaries only |
 | Prevent a secret file from being committed | ✅ | ✅ (diff DENY → never committed) |
-| Prevent a secret file from being *written* | ✅ (not by us) | ❌ detected afterwards |
+| Prevent a secret file from being *written* | ✅ (not by us) | ⚠️ Claude: blocked by the hook; others: detected afterwards |
 | Detect symlink escapes | ✅ | ✅ at step boundaries |
 | Observe network access | ⚠️ command tags (`curl`, `ssh`…) | ❌ |
-| Observe reads of credential stores | ⚠️ command tags / `read` path rules | ❌ |
+| Observe reads of credential stores | ⚠️ command tags / `read` path rules | ⚠️ Claude `Read`/`Bash` via the hook; others ❌ |
 | Control environment variables | ✅ allowlist | ❌ pane agents inherit Herdr's pane env |
 | Stop/interrupt | ✅ process group kill | ✅ interrupt keys via Herdr / close pane |
 | Audit | ✅ | ✅ lifecycle + resulting diff, not individual tool calls |
@@ -167,4 +203,13 @@ provides.
 No telemetry, analytics, crash upload or update checks. The binary itself
 makes no network connections; network access happens only through tools you
 configured it to run (`gh`, `git push`, agent CLIs, your commands). `doctor`
-stays offline unless `--network` is given.
+stays offline unless `--network` is given. The optional PR watcher
+(`github.watch_prs`) calls `gh` for open PRs of recent runs; it only
+notifies.
+
+Token usage of pane agents is read from the agents' own local session logs
+(`$CLAUDE_CONFIG_DIR` or `~/.claude/projects`, `$CODEX_HOME` or
+`~/.codex/sessions`): read-only, bounded (files over 512 MiB are skipped),
+only usage counters and model names are kept, nothing leaves the machine.
+Session ids are never used as paths unless they are plain identifiers.
+Off with `usage.session_logs: false`.

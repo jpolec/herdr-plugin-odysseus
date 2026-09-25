@@ -42,12 +42,15 @@ pub fn render(f: &mut Frame, s: &State) {
         Screen::Text { title, lines, scroll } => text(f, main, title, lines, *scroll),
         Screen::NewTask => new_task(f, main, s.form.as_ref()),
         Screen::Agent(id) => agent_screen(f, main, s, id),
+        Screen::Epics => epics(f, main, s),
+        Screen::EpicDetail { id, scroll } => text(f, main, &format!("epic {id}"), &s.epic_lines, *scroll),
     }
     footer_bar(f, footer, s);
     if let Some(p) = &s.confirm {
         let msg = match p {
             Pending::CancelRun(id) => format!("Cancel run {}? The agent is interrupted; its worktree is kept.  [y] yes  [any] no", s.run(id).map(|r| r.display_name()).unwrap_or(id.clone())),
             Pending::Deny(id) => format!("Deny approval {id}? The run will fail at this step.  [y] yes  [any] no"),
+            Pending::RejectEpic(id) => format!("Reject the open plan tasks of epic {id}? Accepted tasks keep running.  [y] yes  [any] no"),
         };
         let w = (msg.len() as u16 + 4).min(area.width.saturating_sub(4));
         let r = Rect { x: area.x + (area.width.saturating_sub(w)) / 2, y: area.y + area.height / 2 - 2, width: w, height: 4 };
@@ -62,8 +65,10 @@ fn footer_bar(f: &mut Frame, area: Rect, s: &State) {
     let agents = s.runs.iter().flat_map(|r| r.steps.iter()).filter(|e| e.kind == StepKind::Agent && matches!(e.status, StepStatus::Running | StepStatus::AwaitingHuman | StepStatus::Starting)).count();
     let appr = s.pending_approvals().len();
     let keys = match &s.screen {
-        Screen::Dashboard => "[n] new  [enter] inspect  [a] approvals  [r] retry  [x] cancel  [d] diff  [f] focus agent  [p] pause queue  [q] quit",
-        Screen::RunDetail(_) => "[↑↓] step  [enter/l] log  [d] diff  [f] focus agent  [a] approval  [r] retry  [x] cancel  [esc] back",
+        Screen::Dashboard => "[n] new  [enter] inspect  [a] approvals  [e] epics  [r] retry  [x] cancel  [d] diff  [f] focus agent  [F] PR follow-up  [p] pause queue  [q] quit",
+        Screen::RunDetail(_) => "[↑↓] step  [enter/l] log  [d] diff  [f] focus agent  [a] approval  [F] PR follow-up  [r] retry  [x] cancel  [esc] back",
+        Screen::Epics => "[↑↓] select  [enter] plan  [y] accept open tasks  [n] reject  [g] re-plan  [v] verify vs ADR  [esc] back",
+        Screen::EpicDetail { .. } => "[↑↓] scroll  [y] accept open tasks  [n] reject  [g] re-plan  [v] verify vs ADR  [esc] back",
         Screen::Approvals => "[↑↓] select  [enter] open  [esc] back",
         Screen::ApprovalDetail(_) => "[y] approve once  [n] deny  [c] cancel run  [d] diff  [f] open agent pane  [esc] back",
         Screen::Text { .. } => "[↑↓/space] scroll  [g/G] top/bottom  [esc] back",
@@ -77,6 +82,8 @@ fn footer_bar(f: &mut Frame, area: Rect, s: &State) {
         Span::raw(format!("{queued}  ")),
         Span::styled("Agents ", Style::new().add_modifier(Modifier::BOLD)),
         Span::raw(format!("{agents}  ")),
+        Span::styled("Tokens ", Style::new().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("{}  ", crate::telemetry::compact_tokens(&crate::telemetry::runs_agent_usage(s.dashboard_runs().into_iter())))),
         Span::styled("Approvals ", Style::new().add_modifier(Modifier::BOLD)),
         Span::styled(format!("{appr}  "), if appr > 0 { Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::new() }),
         Span::styled(if s.agents_waiting() > 0 { format!("Agents asking {}  ", s.agents_waiting()) } else { String::new() }, Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -103,9 +110,11 @@ fn dashboard(f: &mut Frame, area: Rect, s: &State) {
             let title = s.task(&r.task_id).map(|t| t.title.clone()).unwrap_or_default();
             let marker = if sel { "▶" } else { " " };
             let st = Style::new().fg(status_color(r.status));
+            let tokens = crate::telemetry::compact_tokens(&crate::telemetry::run_agent_usage(r));
             let mut head = vec![
                 Span::raw(format!("{marker}{:<6} ", r.display_name())),
                 Span::styled(format!("{:<18}", r.status.as_str()), st),
+                Span::styled(format!("{tokens:>6} tok  "), Style::new().fg(Color::DarkGray)),
                 Span::styled(title, if sel { Style::new().add_modifier(Modifier::BOLD) } else { Style::new() }),
             ];
             if let Some(reason) = r.status_reason.as_ref().filter(|_| matches!(r.status, RunStatus::Blocked | RunStatus::NeedsHuman | RunStatus::Failed)) {
@@ -128,10 +137,17 @@ fn dashboard(f: &mut Frame, area: Rect, s: &State) {
                         None => ("○", Color::DarkGray, String::new(), String::new()),
                     };
                     let attempt = e.filter(|e| e.attempt > 1).map(|e| format!(" ×{}", e.attempt)).unwrap_or_default();
+                    // Tokens of every attempt of this step (retries add up).
+                    let step_tokens = e
+                        .filter(|e| e.kind == StepKind::Agent)
+                        .map(|_| crate::telemetry::compact_tokens(&UsageRecord::sum(r.steps.iter().filter(|x| x.step_id == id).filter_map(|x| x.usage.as_ref()))))
+                        .map(|t| format!("  {t} tok"))
+                        .unwrap_or_default();
                     lines.push(Line::from(vec![
                         Span::raw(format!("        {:<16}", id)),
                         Span::styled(format!("{icon}  "), Style::new().fg(color)),
                         Span::raw(format!("{:<14}{:>7}{}", who, t, attempt)),
+                        Span::styled(step_tokens, Style::new().fg(Color::DarkGray)),
                     ]));
                 }
             }
@@ -144,7 +160,10 @@ fn dashboard(f: &mut Frame, area: Rect, s: &State) {
         lines.push(Line::styled(" QUEUED", Style::new().fg(Color::DarkGray).add_modifier(Modifier::BOLD)));
         lines.push(Line::raw(""));
         for t in queued {
-            lines.push(Line::raw(format!("  #{:<5} {}", t.task_id, t.title)));
+            lines.push(Line::from(vec![
+                Span::raw(format!("  #{:<5} {}", t.task_id, t.title)),
+                Span::styled(t.waiting_on.as_ref().map(|w| format!("  — {w}")).unwrap_or_default(), Style::new().fg(Color::DarkGray)),
+            ]));
         }
         lines.push(Line::raw(""));
     }
@@ -205,14 +224,15 @@ fn run_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
                 Cell::from(e.runner.clone().unwrap_or_default()),
                 Cell::from(e.attempt.to_string()),
                 Cell::from(dur(e.duration_secs())),
+                Cell::from(if e.kind == StepKind::Agent { e.usage.as_ref().map(crate::telemetry::compact_tokens).unwrap_or_else(|| "–".into()) } else { String::new() }),
                 Cell::from(e.agent.as_ref().and_then(|a| a.pane_id.clone()).unwrap_or_default()),
                 Cell::from(e.error.clone().unwrap_or_default()),
             ])
             .style(st)
         })
         .collect();
-    let table = Table::new(rows, [Constraint::Length(16), Constraint::Length(20), Constraint::Length(12), Constraint::Length(7), Constraint::Length(8), Constraint::Length(8), Constraint::Min(10)])
-        .header(Row::new(vec!["STEP", "STATUS", "AGENT", "ATTEMPT", "TIME", "PANE", "NOTE"]).style(Style::new().fg(Color::DarkGray)))
+    let table = Table::new(rows, [Constraint::Length(16), Constraint::Length(20), Constraint::Length(12), Constraint::Length(7), Constraint::Length(8), Constraint::Length(8), Constraint::Length(8), Constraint::Min(10)])
+        .header(Row::new(vec!["STEP", "STATUS", "AGENT", "ATTEMPT", "TIME", "TOKENS", "PANE", "NOTE"]).style(Style::new().fg(Color::DarkGray)))
         .block(Block::new().borders(Borders::TOP));
     f.render_widget(table, steps);
     let mut b = vec![];
@@ -223,12 +243,12 @@ fn run_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
     if !checks.is_empty() {
         b.push(Line::raw(format!(" Checks: {}", checks.join("  "))));
     }
-    if let Some(v) = r.steps.iter().rev().find_map(|e| e.structured.as_ref()) {
+    if let Some(v) = r.steps.iter().rev().filter_map(|e| e.structured.as_ref()).find(|v| v.get("findings").is_some()) {
         b.push(Line::raw(format!(" Review: {} ({} findings)", v["verdict"].as_str().unwrap_or("?"), v["findings"].as_array().map(|a| a.len()).unwrap_or(0))));
     }
     let (a, q, dn) = r.policy_summary();
     b.push(Line::raw(format!(" Policy: {a} allow · {q} approval · {dn} denied")));
-    let u = r.usage_total();
+    let u = crate::telemetry::run_agent_usage(r);
     b.push(Line::raw(format!(" Usage:  {} · cost {}", crate::telemetry::tokens_display(&u), u.cost_display())));
     if let Some(e) = r.steps.get(s.selected) {
         if let Some(o) = &e.output_excerpt {
@@ -236,6 +256,19 @@ fn run_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
         }
     }
     f.render_widget(Paragraph::new(b).block(Block::new().borders(Borders::TOP)), bottom);
+}
+
+fn epics(f: &mut Frame, area: Rect, s: &State) {
+    let mut lines = vec![Line::styled(" EPICS", Style::new().add_modifier(Modifier::BOLD)), Line::raw("")];
+    if s.epics.is_empty() {
+        lines.push(Line::raw("  No epics yet. Plan an ADR with:"));
+        lines.push(Line::styled("    herdr-orchestrator epic create --from docs/adr/0007-something.md", Style::new().fg(Color::Cyan)));
+    }
+    for (i, row) in s.epic_rows.iter().enumerate() {
+        let st = if i == s.selected { Style::new().add_modifier(Modifier::REVERSED) } else { Style::new() };
+        lines.push(Line::styled(format!("  {row}"), st));
+    }
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 fn approvals(f: &mut Frame, area: Rect, s: &State) {
@@ -282,6 +315,28 @@ fn approval_detail(f: &mut Frame, area: Rect, s: &State, id: &str) {
     }
     for p in &c.policy {
         lines.push(Line::from(vec![Span::styled(" Policy      ", Style::new().fg(Color::DarkGray)), Span::styled(format!("{} ", p.decision.upper()), Style::new().fg(Color::Yellow)), Span::raw(format!("{} — {}", p.subject, p.reason))]));
+    }
+    if !c.acceptance.is_empty() {
+        lines.push(kv("Acceptance", String::new()));
+        for (i, r) in c.acceptance.iter().enumerate() {
+            let color = match r.status.as_str() {
+                "met" => Color::Green,
+                "not_met" => Color::Red,
+                _ => Color::Yellow,
+            };
+            lines.push(Line::from(vec![
+                Span::raw(format!("               {}. ", i + 1)),
+                Span::styled(format!("{:<13}", r.status), Style::new().fg(color)),
+                Span::raw(r.criterion.clone()),
+                Span::styled(if r.evidence.is_empty() { String::new() } else { format!("  — {}", r.evidence) }, Style::new().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+    if !c.manual_checks.is_empty() {
+        lines.push(kv("Check yourself", String::new()));
+        for m in &c.manual_checks {
+            lines.push(Line::raw(format!("               [ ] {m}")));
+        }
     }
     lines.push(Line::raw(""));
     lines.push(Line::styled(" Approval applies to this action only; policies are not changed.", Style::new().fg(Color::DarkGray)));
@@ -392,6 +447,11 @@ mod tests {
             selected_run: None,
             created_at: now(),
             updated_at: now(),
+            epic: None,
+            depends_on: vec![],
+            acceptance: vec![],
+            manual_checks: vec![],
+            waiting_on: None,
         };
         let mut run: Run = serde_json::from_value(serde_json::json!({
             "run_id": "run-a", "task_id": "124", "variant_index": 0, "variant_count": 1,
@@ -462,6 +522,24 @@ mod tests {
         assert!(out.contains("src/a.rs"));
         assert!(out.contains("[y] approve once"));
         assert!(out.contains("Approvals 1"));
+    }
+
+    #[test]
+    fn epics_screen_and_tokens() {
+        let mut s = sample();
+        s.runs[0].steps[0].usage = Some(UsageRecord { source: UsageSource::Reported, input_tokens: Some(12_000), output_tokens: Some(3_000), ..Default::default() });
+        let mut t = Terminal::new(TestBackend::new(140, 30)).unwrap();
+        t.draw(|f| render(f, &s)).unwrap();
+        let out = buffer_text(&t);
+        assert!(out.contains("15k tok"), "{out}");
+        assert!(out.contains("[e] epics"));
+        s.screen = Screen::Epics;
+        s.epic_rows = vec!["E1   proposed      0/0  done   3 open       – tok  7. Rate limiting".into()];
+        s.epics = vec![];
+        let mut t = Terminal::new(TestBackend::new(140, 20)).unwrap();
+        t.draw(|f| render(f, &s)).unwrap();
+        let out = buffer_text(&t);
+        assert!(out.contains("EPICS") && out.contains("7. Rate limiting") && out.contains("[y] accept open tasks"));
     }
 
     #[test]

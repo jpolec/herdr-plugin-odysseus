@@ -69,6 +69,38 @@ pub enum Cmd {
     Skills,
     /// List runners.
     Runners,
+    /// Architecture Decision Records in this repository.
+    #[command(subcommand)]
+    Adr(AdrCmd),
+    /// ADR → plan → accepted tasks → conformance review.
+    #[command(subcommand)]
+    Epic(EpicCmd),
+    /// Remove worktrees of finished runs that are merged, closed or superseded.
+    Gc {
+        /// Remove them (default: only list).
+        #[arg(long)]
+        yes: bool,
+        /// Also ask GitHub whether PRs were merged or closed.
+        #[arg(long)]
+        check_prs: bool,
+        /// Also failed/cancelled runs finished more than --days ago.
+        #[arg(long)]
+        failed: bool,
+        #[arg(long, default_value_t = 7)]
+        days: i64,
+    },
+    /// Outcomes per implementing runner and workflow (local data only).
+    Stats,
+    /// Token usage per task (agents in panes are read from their own local
+    /// session logs; `~` marks estimates).
+    Usage {
+        /// Only this task.
+        #[arg(long)]
+        task: Option<String>,
+        /// Include finished tasks older than the last 20.
+        #[arg(long)]
+        all: bool,
+    },
     /// Show what a task would do (alias of `--dry-run task create`).
     Plan(PlanArgs),
     /// Check the environment.
@@ -100,6 +132,10 @@ pub struct TaskOpts {
     /// Implementer runner per variant, comma separated: `codex,codex,claude`.
     #[arg(long, value_delimiter = ',')]
     pub variant_runners: Vec<String>,
+    /// Paths the task may change (glob, repeatable). Changes elsewhere need
+    /// your approval: `--scope 'src/webhooks/**' --scope 'tests/**'`.
+    #[arg(long)]
+    pub scope: Vec<String>,
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
@@ -151,6 +187,70 @@ pub enum TaskCmd {
         #[arg(long, default_value = "cancelled by user")]
         reason: String,
     },
+    /// Start a task now even though its dependencies are not done.
+    Unblock { task: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AdrCmd {
+    /// List ADRs with their status and epic.
+    List {
+        /// Include superseded, rejected and deprecated ADRs.
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EpicCmd {
+    /// Plan an ADR (or every active ADR without an epic in a directory).
+    Create {
+        #[arg(long)]
+        from: PathBuf,
+        /// Runner for the planning agent.
+        #[arg(long, short)]
+        runner: Option<String>,
+        /// Do not start the daemon.
+        #[arg(long)]
+        no_start: bool,
+    },
+    List,
+    Show { epic: String },
+    /// Accept the plan (or some tasks): they are queued with dependencies.
+    Accept {
+        epic: String,
+        /// Only these task keys, comma separated.
+        #[arg(long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
+        /// Runner for every agent step of the created tasks.
+        #[arg(long, short)]
+        runner: Option<String>,
+        /// Runner for one step: `--step-runner acceptance=claude` (repeatable).
+        #[arg(long = "step-runner", value_parser = parse_kv)]
+        step_runner: Vec<(String, String)>,
+        #[arg(long)]
+        base: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Decline the plan, or some of its tasks.
+    Reject {
+        epic: String,
+        #[arg(long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Plan again (with the current ADR text) taking your feedback into account.
+    Replan {
+        epic: String,
+        #[arg(long)]
+        feedback: Option<String>,
+    },
+    /// Edit the plan in $EDITOR (YAML); it is validated on save.
+    Edit { epic: String },
+    /// Check the combined result against the ADR; gaps become proposed follow-ups.
+    Verify { epic: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -213,6 +313,19 @@ pub enum RunCmd {
         run: String,
         #[arg(long)]
         ready: bool,
+    },
+    /// Queue a follow-up on the run's PR from its review comments and
+    /// failing checks (same branch, same PR).
+    Followup {
+        run: String,
+        /// Extra instructions for the agent.
+        #[arg(long)]
+        note: Option<String>,
+        /// Runner for every agent step (default: the original run's).
+        #[arg(long, short)]
+        runner: Option<String>,
+        #[arg(long)]
+        no_start: bool,
     },
 }
 
@@ -430,6 +543,8 @@ fn task_options(o: &TaskOpts, dry_run: bool) -> TaskOptions {
         variant_runners: o.variant_runners.clone(),
         step_runners: o.step_runner.iter().cloned().collect::<BTreeMap<_, _>>(),
         dry_run,
+        scope: o.scope.clone(),
+        ..Default::default()
     }
 }
 
@@ -457,6 +572,11 @@ pub fn main() -> Result<i32> {
             Ok(0)
         }
         Cmd::Runners => runners_cmd(&app),
+        Cmd::Usage { task, all } => usage_cmd(&app, task, all),
+        Cmd::Adr(c) => adr_cmd(&app, c),
+        Cmd::Epic(c) => epic_cmd(&app, c),
+        Cmd::Gc { yes, check_prs, failed, days } => gc_cmd(&app, yes, check_prs, failed, days),
+        Cmd::Stats => stats_cmd(&app),
         Cmd::Plan(p) => plan_cmd(&app, &read_text(&p.text)?, &p.opts),
         Cmd::Doctor(a) => doctor::run(&app, a),
         Cmd::Ui(a) => {
@@ -510,7 +630,7 @@ fn task_cmd(app: &App, c: TaskCmd) -> Result<i32> {
             if app.dry_run {
                 return plan_cmd(app, &body, &opts);
             }
-            let task = engine::create_task(&ctx, NewTask { text: body, title: ttl, repo, options: task_options(&opts, false), via: "cli".into(), source })?;
+            let task = engine::create_task(&ctx, NewTask { text: body, title: ttl, repo, options: task_options(&opts, false), via: "cli".into(), source, ..Default::default() })?;
             if app.cli_json {
                 app.print_json(&task)?;
             } else {
@@ -534,7 +654,9 @@ fn task_cmd(app: &App, c: TaskCmd) -> Result<i32> {
                 println!("no {}tasks", if all { "" } else { "open " });
             }
             for t in tasks {
-                println!("#{:<5} {:<18} {:<18} {}", t.task_id, t.status.as_str(), t.options.workflow.clone().unwrap_or_default(), t.title);
+                let runs: Vec<Run> = t.run_ids.iter().filter_map(|id| ctx.store.load_run(id).ok()).collect();
+                let tokens = crate::telemetry::compact_tokens(&crate::telemetry::runs_agent_usage(runs.iter()));
+                println!("#{:<5} {:<18} {:<18} {:>7}  {}", t.task_id, t.status.as_str(), t.options.workflow.clone().unwrap_or_default(), tokens, t.title);
             }
             Ok(0)
         }
@@ -547,9 +669,11 @@ fn task_cmd(app: &App, c: TaskCmd) -> Result<i32> {
             }
             println!("Task #{} — {}\nStatus: {}\nRepo: {}\nWorkflow: {}\nCreated: {} by {}\n", t.task_id, t.title, t.status.as_str(), t.repo_root.display(), t.options.workflow.clone().unwrap_or_default(), t.created_at.format("%Y-%m-%d %H:%M"), t.initiator.user.clone().unwrap_or_default());
             println!("{}\n", t.description.trim());
-            for r in runs {
-                println!("{}", render::run_line(&r));
+            for r in &runs {
+                println!("{}", render::run_line(r));
             }
+            let u = crate::telemetry::runs_agent_usage(runs.iter());
+            println!("\nTokens: {}", crate::telemetry::tokens_display(&u));
             Ok(0)
         }
         TaskCmd::Compare { task } => {
@@ -586,6 +710,13 @@ fn task_cmd(app: &App, c: TaskCmd) -> Result<i32> {
             }
             crate::daemon::nudge(&ctx.store.layout);
             println!("cancellation requested for task #{}", t.task_id);
+            Ok(0)
+        }
+        TaskCmd::Unblock { task } => {
+            let ctx = app.ctx(false)?;
+            let t = crate::epic::engine::unblock(&ctx, task.trim_start_matches('#'), user())?;
+            crate::daemon::nudge(&ctx.store.layout);
+            println!("task #{} will start without waiting for its dependencies", t.task_id);
             Ok(0)
         }
     }
@@ -769,6 +900,15 @@ fn run_cmd(app: &App, c: RunCmd) -> Result<i32> {
             }
             let url = engine::handoff::create_pr_for_run(&ctx, &run, !ready, user())?;
             println!("{url}");
+            Ok(0)
+        }
+        RunCmd::Followup { run, note, runner, no_start } => {
+            let ctx = app.ctx(false)?;
+            let t = engine::followup::pr_followup(&ctx, &run, note, runner, "cli")?;
+            println!("queued follow-up task #{} — {}", t.task_id, t.title);
+            if !no_start {
+                app.ensure_daemon()?;
+            }
             Ok(0)
         }
     }
@@ -1103,8 +1243,309 @@ fn config_cmd(app: &App, c: ConfigCmd) -> Result<i32> {
             std::fs::create_dir_all(p.parent().unwrap())?;
             std::fs::write(&p, render::SAMPLE_PROJECT_CONFIG)?;
             println!("wrote {}", p.display());
+            // The sample config references the project policy file.
+            let pol = p.parent().unwrap().join("policy.yaml");
+            if !pol.exists() {
+                std::fs::write(&pol, "# Project policy, added to the built-in default (it can only make things stricter).\n# See docs/POLICY_ENGINE.md. Example:\n#\n# rules:\n#   - id: approve-payments\n#     match:\n#       paths: [\"src/payments/**\"]\n#     actions: [write, delete]\n#     decision: require_approval\nversion: 1\nrules: []\n")?;
+                println!("wrote {}", pol.display());
+            }
         }
     }
+    Ok(0)
+}
+
+fn adr_cmd(app: &App, c: AdrCmd) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let repo = app.repo()?;
+    let cfg = ctx.load_config(Some(&repo))?;
+    match c {
+        AdrCmd::List { all } => {
+            let _ = crate::epic::engine::sync(&ctx);
+            let epics = ctx.store.list_epics()?;
+            let adrs: Vec<_> = crate::epic::discover(&repo, &cfg.config.epic.adr_dirs).into_iter().filter(|a| all || !a.is_inactive()).collect();
+            if app.cli_json {
+                return app.print_json(&adrs).map(|_| 0);
+            }
+            if adrs.is_empty() {
+                println!("no ADRs found in {} (set epic.adr_dirs)", cfg.config.epic.adr_dirs.join(", "));
+            }
+            for a in adrs {
+                let e = epics.iter().rev().find(|e| e.adr.path == a.path && e.repo_root == repo);
+                let epic = match e {
+                    Some(e) => format!("{} {}{}", e.epic_id, e.status.as_str(), if e.adr.sha256 != a.sha256 { " · ADR changed since the plan" } else { "" }),
+                    None => "-".into(),
+                };
+                println!("{:<48} {:<14} {:<36} {}", a.path, a.status.clone().unwrap_or_else(|| "?".into()), epic, a.title);
+            }
+        }
+    }
+    Ok(0)
+}
+
+pub(crate) fn epic_line(ctx: &EngineCtx, e: &crate::epic::Epic) -> String {
+    let done = e.tasks.values().filter(|id| ctx.store.load_task(id).map(|t| t.status == TaskStatus::Succeeded).unwrap_or(false)).count();
+    let runs: Vec<Run> = e.tasks.values().filter_map(|id| ctx.store.load_task(id).ok()).flat_map(|t| t.run_ids).filter_map(|id| ctx.store.load_run(&id).ok()).collect();
+    let tokens = crate::telemetry::compact_tokens(&crate::telemetry::runs_agent_usage(runs.iter()));
+    format!(
+        "{:<4} {:<12} {:>2}/{:<2} done {:>3} open {:>7} tok  {}{}",
+        e.epic_id,
+        e.status.as_str(),
+        done,
+        e.tasks.len(),
+        e.open_keys().len(),
+        tokens,
+        e.adr.title,
+        if crate::epic::engine::adr_drifted(e) == Some(true) { "  (ADR changed since the plan)" } else { "" }
+    )
+}
+
+pub(crate) fn epic_detail(ctx: &EngineCtx, e: &crate::epic::Epic) -> String {
+    let mut s = format!("Epic {} — {}\nADR      {} ({})\nStatus   {}{}\n", e.epic_id, e.adr.title, e.adr.path, e.adr.status.clone().unwrap_or_else(|| "no status".into()), e.status.as_str(), e.status_reason.as_ref().map(|r| format!(" — {r}")).unwrap_or_default());
+    if crate::epic::engine::adr_drifted(e) == Some(true) {
+        s.push_str("Warning  the ADR changed since it was planned — `epic replan` proposes an updated plan\n");
+    }
+    if let Some(p) = &e.plan {
+        if !p.decision_summary.is_empty() {
+            s.push_str(&format!("Decision {}\n", p.decision_summary));
+        }
+        if !p.open_questions.is_empty() {
+            s.push_str("\nOPEN QUESTIONS (answer them with `epic replan --feedback` or `epic edit`)\n");
+            for q in &p.open_questions {
+                s.push_str(&format!("  ? {q}\n"));
+            }
+        }
+        s.push_str("\nTASKS\n");
+        let order = crate::epic::topo_order(&p.tasks).unwrap_or_else(|_| p.tasks.iter().map(|t| t.key.clone()).collect());
+        for k in order {
+            let Some(t) = e.plan_task(&k) else { continue };
+            let state = match e.tasks.get(&k) {
+                Some(id) => ctx.store.load_task(id).map(|x| format!("#{id} {}{}", x.status.as_str(), x.waiting_on.map(|w| format!(" ({w})")).unwrap_or_default())).unwrap_or_else(|_| format!("#{id}")),
+                None if e.declined.contains(&k) => "declined".into(),
+                None => "proposed".into(),
+            };
+            s.push_str(&format!("  {:<4} {:<42} {}\n", t.key, t.title.chars().take(42).collect::<String>(), state));
+            if !t.depends_on.is_empty() {
+                s.push_str(&format!("       after: {}\n", t.depends_on.join(", ")));
+            }
+            for (i, a) in t.acceptance.iter().enumerate() {
+                s.push_str(&format!("       {}. {a}\n", i + 1));
+            }
+            for c in &t.verification.commands {
+                s.push_str(&format!("       runs: {}\n", crate::policies::command::display_argv(c)));
+            }
+            if !t.verification.checks.is_empty() {
+                s.push_str(&format!("       checks: {}\n", t.verification.checks.join(", ")));
+            }
+            for m in &t.verification.manual {
+                s.push_str(&format!("       manual: {m}\n"));
+            }
+            if !t.scope.is_empty() {
+                s.push_str(&format!("       scope: {}\n", t.scope.join(", ")));
+            }
+        }
+        if !p.out_of_scope.is_empty() {
+            s.push_str(&format!("\nOut of scope: {}\n", p.out_of_scope.join("; ")));
+        }
+    }
+    if let Some(c) = &e.conformance {
+        s.push_str("\nCONFORMANCE\n");
+        if let Some(err) = c.get("error").and_then(|x| x.as_str()) {
+            s.push_str(&format!("  failed: {err}\n"));
+        }
+        for p in c["points"].as_array().into_iter().flatten() {
+            s.push_str(&format!("  [{}] {}{}\n", p["status"].as_str().unwrap_or("?"), p["point"].as_str().unwrap_or(""), p["evidence"].as_str().filter(|x| !x.is_empty()).map(|x| format!(" — {x}")).unwrap_or_default()));
+        }
+    }
+    let open = e.open_keys();
+    s.push('\n');
+    match e.status {
+        crate::epic::EpicStatus::Proposed | crate::epic::EpicStatus::Accepted | crate::epic::EpicStatus::Done if !open.is_empty() => {
+            s.push_str(&format!("Proposed and not decided: {}\n  accept:  herdr-orchestrator epic accept {} [--only {}]\n  decline: herdr-orchestrator epic reject {} [--only …]\n  change:  herdr-orchestrator epic replan {} --feedback \"…\"   or   epic edit {}\n", open.join(", "), e.epic_id, open.join(","), e.epic_id, e.epic_id, e.epic_id));
+            s.push_str("Accepting approves the listed `runs:` commands as check steps (they are still policy-checked).\n");
+        }
+        crate::epic::EpicStatus::Done => s.push_str(&format!("All tasks finished. Check the result against the ADR: herdr-orchestrator epic verify {}\n", e.epic_id)),
+        _ => {}
+    }
+    s
+}
+
+fn epic_cmd(app: &App, c: EpicCmd) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let _ = crate::epic::engine::sync(&ctx);
+    match c {
+        EpicCmd::Create { from, runner, no_start } => {
+            let repo = app.repo()?;
+            let full = if from.is_absolute() { from.clone() } else { std::env::current_dir()?.join(&from) };
+            let targets: Vec<PathBuf> = if full.is_dir() {
+                let cfg = ctx.load_config(Some(&repo))?;
+                let _ = cfg;
+                let rel = full.strip_prefix(&repo).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| full.display().to_string());
+                let existing: Vec<String> = ctx.store.list_epics()?.into_iter().filter(|e| e.status != crate::epic::EpicStatus::Rejected).map(|e| e.adr.path).collect();
+                crate::epic::discover(&repo, &[rel]).into_iter().filter(|a| !a.is_inactive() && !existing.contains(&a.path)).map(|a| repo.join(a.path)).collect()
+            } else {
+                vec![full]
+            };
+            if targets.is_empty() {
+                bail!("no active ADR without an epic in {}", from.display());
+            }
+            for t in targets {
+                let e = crate::epic::engine::create_epic(&ctx, &repo, &t, runner.clone(), "cli")?;
+                println!("epic {} — planning {} (task #{})", e.epic_id, e.adr.path, e.planning_tasks.last().cloned().unwrap_or_default());
+            }
+            if !no_start {
+                app.ensure_daemon()?;
+            }
+            println!("when the plan is ready: herdr-orchestrator epic show <id>");
+        }
+        EpicCmd::List => {
+            let epics = ctx.store.list_epics()?;
+            if app.cli_json {
+                return app.print_json(&epics).map(|_| 0);
+            }
+            if epics.is_empty() {
+                println!("no epics — start one with: herdr-orchestrator epic create --from docs/adr/<file>.md");
+            }
+            for e in &epics {
+                println!("{}", epic_line(&ctx, e));
+            }
+        }
+        EpicCmd::Show { epic } => {
+            let e = ctx.store.load_epic(&epic)?;
+            if app.cli_json {
+                return app.print_json(&e).map(|_| 0);
+            }
+            print!("{}", epic_detail(&ctx, &e));
+        }
+        EpicCmd::Accept { epic, only, runner, step_runner, base, note } => {
+            let e = crate::epic::engine::accept(
+                &ctx,
+                &epic,
+                crate::epic::engine::AcceptOptions { only, runner, step_runners: step_runner.into_iter().collect(), base_ref: base, note, user: user(), via: "cli".into() },
+            )?;
+            println!("epic {}: {} task(s) queued", e.epic_id, e.tasks.len());
+            app.ensure_daemon()?;
+        }
+        EpicCmd::Reject { epic, only, note } => {
+            let e = crate::epic::engine::reject(&ctx, &epic, only, note, user())?;
+            println!("epic {} is {}; open: {}", e.epic_id, e.status.as_str(), e.open_keys().join(", "));
+        }
+        EpicCmd::Replan { epic, feedback } => {
+            let e = crate::epic::engine::replan(&ctx, &epic, feedback, "cli")?;
+            println!("epic {}: planning again (task #{})", e.epic_id, e.planning_tasks.last().cloned().unwrap_or_default());
+            app.ensure_daemon()?;
+        }
+        EpicCmd::Edit { epic } => {
+            let e = ctx.store.load_epic(&epic)?;
+            let plan = e.plan.clone().context("epic has no plan yet")?;
+            let dir = ctx.store.layout.cache_dir();
+            std::fs::create_dir_all(&dir)?;
+            let file = dir.join(format!("{}-plan.yaml", e.epic_id));
+            std::fs::write(&file, format!("# Plan of epic {} ({}). Save and quit to apply; it is validated.\n{}", e.epic_id, e.adr.path, serde_yaml_ng::to_string(&plan)?))?;
+            let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
+            let mut parts = crate::policies::command::tokenize(&editor);
+            if parts.is_empty() {
+                bail!("set $EDITOR");
+            }
+            let prog = parts.remove(0);
+            let st = std::process::Command::new(prog).args(parts).arg(&file).status()?;
+            if !st.success() {
+                bail!("editor exited with {st}; plan unchanged");
+            }
+            let e = crate::epic::engine::set_plan(&ctx, &e.epic_id, &std::fs::read_to_string(&file)?, user())?;
+            println!("plan of epic {} updated ({} task(s))", e.epic_id, e.plan.map(|p| p.tasks.len()).unwrap_or(0));
+        }
+        EpicCmd::Verify { epic } => {
+            let e = crate::epic::engine::verify(&ctx, &epic, "cli")?;
+            println!("epic {}: conformance review queued (task #{})", e.epic_id, e.conformance_task.clone().unwrap_or_default());
+            app.ensure_daemon()?;
+        }
+    }
+    Ok(0)
+}
+
+fn gc_cmd(app: &App, yes: bool, check_prs: bool, failed: bool, days: i64) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let list = engine::maintenance::gc_candidates(&ctx, &engine::maintenance::GcOptions { check_prs, include_failed: failed, older_than_days: days })?;
+    if app.cli_json && !yes {
+        return app.print_json(&list).map(|_| 0);
+    }
+    if list.is_empty() {
+        println!("nothing to clean up");
+        return Ok(0);
+    }
+    for c in &list {
+        println!("{:<6} {:<40} {}", c.run, c.worktree.display(), c.reason);
+    }
+    if !yes {
+        println!("\n{} worktree(s) can be removed (branches stay). Run again with --yes to remove them.", list.len());
+        return Ok(0);
+    }
+    let mut bad = 0;
+    for (run, res) in engine::maintenance::gc_remove(&ctx, &list, user()) {
+        match res {
+            Ok(()) => println!("removed worktree of {run}"),
+            Err(e) => {
+                bad += 1;
+                println!("kept {run}: {e:#}");
+            }
+        }
+    }
+    Ok(if bad > 0 { 1 } else { 0 })
+}
+
+fn stats_cmd(app: &App) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let runs = ctx.store.list_runs()?;
+    let stats = engine::maintenance::runner_stats(&runs);
+    if app.cli_json {
+        return app.print_json(&stats).map(|_| 0);
+    }
+    if stats.is_empty() {
+        println!("no finished runs yet");
+        return Ok(0);
+    }
+    println!("{:<16} {:<18} {:>5} {:>8} {:>8} {:>9} {:>14} {:>9} {:>8}", "RUNNER", "WORKFLOW", "RUNS", "SUCCESS", "FAILED", "ATTEMPTS", "1ST REVIEW OK", "TOKENS", "MINUTES");
+    for s in stats {
+        println!(
+            "{:<16} {:<18} {:>5} {:>7.0}% {:>8} {:>9.1} {:>14} {:>9} {:>8}",
+            s.runner,
+            s.workflow,
+            s.runs,
+            100.0 * s.succeeded as f64 / s.runs as f64,
+            s.failed,
+            s.avg_attempts,
+            if s.reviewed > 0 { format!("{}/{}", s.first_review_approved, s.reviewed) } else { "-".into() },
+            s.avg_tokens.map(|t| crate::telemetry::compact_tokens(&UsageRecord { source: UsageSource::Reported, input_tokens: Some(t), output_tokens: Some(0), ..Default::default() })).unwrap_or_else(|| "–".into()),
+            s.avg_minutes.map(|m| format!("{m:.1}")).unwrap_or_else(|| "-".into())
+        );
+    }
+    println!("\nLocal data only. ATTEMPTS = tries of the implementing step per run; TOKENS = average per run where known.");
+    Ok(0)
+}
+
+fn usage_cmd(app: &App, task: Option<String>, all: bool) -> Result<i32> {
+    let ctx = app.ctx(false)?;
+    let mut tasks = ctx.store.list_tasks()?;
+    if let Some(t) = &task {
+        let id = t.trim_start_matches('#');
+        tasks.retain(|x| x.task_id == id);
+        if tasks.is_empty() {
+            bail!("no task {t}");
+        }
+    } else if !all && tasks.len() > 20 {
+        tasks.drain(..tasks.len() - 20);
+    }
+    let rows: Vec<render::UsageRow> = tasks
+        .iter()
+        .map(|t| {
+            let runs: Vec<Run> = t.run_ids.iter().filter_map(|id| ctx.store.load_run(id).ok()).collect();
+            render::usage_row(t, &runs)
+        })
+        .collect();
+    if app.cli_json {
+        return app.print_json(&rows).map(|_| 0);
+    }
+    print!("{}", render::usage_table(&rows));
     Ok(0)
 }
 

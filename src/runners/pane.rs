@@ -230,7 +230,7 @@ impl AgentRunner for PaneRunner {
     }
 
     fn capabilities(&self) -> RunnerCapabilities {
-        RunnerCapabilities { interactive: true, reports_usage: false, needs_herdr: true, resumable_session: true }
+        RunnerCapabilities { interactive: true, reports_usage: true, needs_herdr: true, resumable_session: true }
     }
 
     fn start(&self, req: &AgentRequest, cancel: &CancelToken, events: &mut dyn FnMut(AgentEvent)) -> Result<AgentBinding> {

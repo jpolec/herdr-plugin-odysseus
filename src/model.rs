@@ -188,6 +188,21 @@ pub struct TaskOptions {
     pub step_runners: BTreeMap<String, String>,
     #[serde(default)]
     pub dry_run: bool,
+    /// Globs the task is expected to change. Changes outside them need a
+    /// human's approval (empty = no scope check).
+    #[serde(default)]
+    pub scope: Vec<String>,
+    /// Extra named checks to run before the review (epic verification).
+    #[serde(default)]
+    pub extra_checks: Vec<String>,
+    /// Extra check commands (argv) to run before the review. Accepted by a
+    /// human with the plan; still policy-checked before they run.
+    #[serde(default)]
+    pub extra_commands: Vec<Vec<String>>,
+    /// Continue an existing run's branch and worktree instead of starting
+    /// from the base (PR follow-ups).
+    #[serde(default)]
+    pub continue_run: Option<String>,
 }
 
 fn one() -> u32 {
@@ -204,6 +219,10 @@ impl Default for TaskOptions {
             variant_runners: vec![],
             step_runners: BTreeMap::new(),
             dry_run: false,
+            scope: vec![],
+            extra_checks: vec![],
+            extra_commands: vec![],
+            continue_run: None,
         }
     }
 }
@@ -227,6 +246,35 @@ pub struct Task {
     pub selected_run: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    /// The epic (accepted ADR plan) this task belongs to.
+    #[serde(default)]
+    pub epic: Option<EpicLink>,
+    /// Task ids that must be done first (see `epic.dependency_mode`).
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Acceptance criteria (untrusted text; prompt-only `{{acceptance}}`).
+    #[serde(default)]
+    pub acceptance: Vec<String>,
+    /// Checks only a human can do; listed in approvals.
+    #[serde(default)]
+    pub manual_checks: Vec<String>,
+    /// Why a queued task has not started yet (unmet dependencies).
+    #[serde(default)]
+    pub waiting_on: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EpicLink {
+    pub epic_id: String,
+    /// Plan task key, e.g. `T3`.
+    pub key: String,
+}
+
+impl Task {
+    /// Numbered acceptance criteria for prompts (empty when none).
+    pub fn acceptance_text(&self) -> String {
+        self.acceptance.iter().enumerate().map(|(i, c)| format!("{}. {c}", i + 1)).collect::<Vec<_>>().join("\n")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -234,6 +282,10 @@ pub struct Task {
 pub enum TaskSource {
     Manual,
     GithubIssue { repo: String, number: u64, url: String },
+    /// Planning (or conformance review) of an ADR for an epic.
+    Epic { epic_id: String, adr_path: String, adr_sha256: String, purpose: String },
+    /// Follow-up on review comments / failing CI of an existing PR.
+    PrFeedback { run_id: String, pr_url: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -312,6 +364,9 @@ pub struct Run {
     /// Failure feedback waiting to be delivered to the retried step.
     #[serde(default)]
     pub pending_feedback: Option<String>,
+    /// Step whose failure produced `pending_feedback`.
+    #[serde(default)]
+    pub pending_feedback_step: Option<String>,
     /// Bounded step outputs for `{{step.<id>.output}}` / `{{previous.output}}`.
     #[serde(default)]
     pub outputs: BTreeMap<String, String>,
@@ -330,6 +385,9 @@ pub struct Run {
     /// Human-selected variant (tournament mode).
     #[serde(default)]
     pub selected: bool,
+    /// Fingerprint of the PR feedback last reported (PR watcher).
+    #[serde(default)]
+    pub pr_feedback_seen: Option<String>,
 }
 
 /// "The human approved what the next step is about to do" — valid only for
@@ -738,12 +796,14 @@ mod tests {
             pr_url: None,
             diff_stat: None,
             pending_feedback: None,
+            pending_feedback_step: None,
             outputs: BTreeMap::new(),
             approved_paths: BTreeMap::new(),
             approval_cover: None,
             step_runners: BTreeMap::new(),
             recovered: false,
             selected: false,
+            pr_feedback_seen: None,
         }
     }
 }

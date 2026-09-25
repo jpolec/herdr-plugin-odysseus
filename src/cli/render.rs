@@ -39,11 +39,12 @@ pub fn run_line(r: &Run) -> String {
         .map(|e| format!("{} {}{}", e.step_id, step_icon(e.status), e.runner.as_ref().map(|x| format!(" {x}")).unwrap_or_default()))
         .unwrap_or_default();
     format!(
-        "{:<6} {:<17} {:<18} {:<28} {}{}",
+        "{:<6} {:<17} {:<18} {:<28} {:>7}  {}{}",
         r.display_name(),
         r.status.as_str(),
         r.workflow_name,
         current,
+        crate::telemetry::compact_tokens(&crate::telemetry::run_agent_usage(r)),
         r.git.branch.clone().unwrap_or_default(),
         r.status_reason.as_ref().filter(|_| !r.status.is_active() && r.status != RunStatus::Succeeded).map(|s| format!("  — {s}")).unwrap_or_default()
     )
@@ -65,16 +66,17 @@ pub fn run_detail(r: &Run, task: &Task) -> String {
     if let Some(u) = &r.pr_url {
         s.push_str(&format!("PR         {u}\n"));
     }
-    s.push_str(&format!("\n{:<16} {:<18} {:<10} {:<8} {:>8}  {}\n", "STEP", "STATUS", "AGENT", "ATTEMPT", "TIME", "PANE"));
+    s.push_str(&format!("\n{:<16} {:<18} {:<10} {:<8} {:>8} {:>8}  {}\n", "STEP", "STATUS", "AGENT", "ATTEMPT", "TIME", "TOKENS", "PANE"));
     for e in &r.steps {
         s.push_str(&format!(
-            "{:<16} {} {:<16} {:<10} {:<8} {:>8}  {}\n",
+            "{:<16} {} {:<16} {:<10} {:<8} {:>8} {:>8}  {}\n",
             e.step_id,
             step_icon(e.status),
             e.status.as_str(),
             e.runner.clone().unwrap_or_default(),
             e.attempt,
             dur(e.duration_secs()),
+            if e.kind == StepKind::Agent { e.usage.as_ref().map(crate::telemetry::compact_tokens).unwrap_or_else(|| "–".into()) } else { String::new() },
             e.agent.as_ref().and_then(|a| a.pane_id.clone()).unwrap_or_default()
         ));
         if let Some(err) = &e.error {
@@ -97,7 +99,7 @@ pub fn run_detail(r: &Run, task: &Task) -> String {
             s.push_str(&format!("  {} {} (attempt {}, exit {})\n", step_icon(c.status), c.step_id, c.attempt, c.exit_code.map(|x| x.to_string()).unwrap_or("-".into())));
         }
     }
-    if let Some(rv) = r.steps.iter().rev().find_map(|e| e.structured.as_ref()) {
+    if let Some(rv) = r.steps.iter().rev().filter_map(|e| e.structured.as_ref()).find(|v| v.get("findings").is_some()) {
         s.push_str(&format!("\nReview: {} ({} findings)\n", rv["verdict"].as_str().unwrap_or("?"), rv["findings"].as_array().map(|a| a.len()).unwrap_or(0)));
         for f in rv["findings"].as_array().into_iter().flatten().take(10) {
             s.push_str(&format!("  [{}] {}{} — {}\n", f["severity"].as_str().unwrap_or("?"), f["file"].as_str().unwrap_or(""), f["line"].as_u64().map(|l| format!(":{l}")).unwrap_or_default(), f["description"].as_str().unwrap_or("")));
@@ -105,8 +107,55 @@ pub fn run_detail(r: &Run, task: &Task) -> String {
     }
     let (a, q, d) = r.policy_summary();
     s.push_str(&format!("\nPolicy: {a} allow · {q} approval · {d} denied\n"));
-    let u = r.usage_total();
+    let u = crate::telemetry::run_agent_usage(r);
     s.push_str(&format!("Usage:  {} · cost {}\n", crate::telemetry::tokens_display(&u), u.cost_display()));
+    s
+}
+
+/// One row per task: agent token usage summed over all its runs.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageRow {
+    pub task: String,
+    pub title: String,
+    pub status: String,
+    pub runs: usize,
+    pub agent_steps: usize,
+    pub agent_steps_with_usage: usize,
+    pub usage: UsageRecord,
+}
+
+pub fn usage_row(t: &Task, runs: &[Run]) -> UsageRow {
+    let s = crate::telemetry::summarize(runs.iter());
+    UsageRow {
+        task: format!("#{}", t.task_id),
+        title: t.title.clone(),
+        status: t.status.as_str().into(),
+        runs: runs.len(),
+        agent_steps: s.agent_steps,
+        agent_steps_with_usage: s.agent_steps_with_usage,
+        usage: s.total,
+    }
+}
+
+pub fn usage_table(rows: &[UsageRow]) -> String {
+    let n = |x: Option<u64>| x.map(|v| v.to_string()).unwrap_or_else(|| "?".into());
+    let mut s = format!("{:<7} {:<18} {:>5} {:>9} {:>12} {:>10} {:>12} {:>8}  {}\n", "TASK", "STATUS", "RUNS", "STEPS", "INPUT", "OUTPUT", "CACHED", "TOTAL", "TITLE");
+    for r in rows {
+        s.push_str(&format!(
+            "{:<7} {:<18} {:>5} {:>9} {:>12} {:>10} {:>12} {:>8}  {}\n",
+            r.task,
+            r.status,
+            r.runs,
+            format!("{}/{}", r.agent_steps_with_usage, r.agent_steps),
+            n(r.usage.input_tokens),
+            n(r.usage.output_tokens),
+            n(r.usage.cached_tokens),
+            crate::telemetry::compact_tokens(&r.usage),
+            r.title.chars().take(50).collect::<String>()
+        ));
+    }
+    let all = UsageRecord::sum(rows.iter().map(|r| &r.usage));
+    s.push_str(&format!("\nTotal: {} ({}); STEPS = agent steps with known usage / all agent steps; ~ = estimated or partial.\n", crate::telemetry::tokens_display(&all), all.cost_display()));
     s
 }
 
@@ -139,7 +188,7 @@ pub fn compare_row(r: &Run) -> CompareRow {
         .steps
         .iter()
         .rev()
-        .find_map(|e| e.structured.as_ref())
+        .filter_map(|e| e.structured.as_ref()).find(|v| v.get("findings").is_some())
         .map(|v| format!("{} ({})", v["verdict"].as_str().unwrap_or("?"), v["findings"].as_array().map(|a| a.len()).unwrap_or(0)))
         .unwrap_or_else(|| "-".into());
     let runtime = match (r.started_at, r.completed_at) {
@@ -199,6 +248,18 @@ pub fn approval_detail(a: &ApprovalRequest) -> String {
     }
     for p in &c.policy {
         s.push_str(&format!("Policy     {} {} — {}\n", p.decision.upper(), p.subject, p.reason));
+    }
+    if !c.acceptance.is_empty() {
+        s.push_str("Acceptance\n");
+        for (i, r) in c.acceptance.iter().enumerate() {
+            s.push_str(&format!("  {}. [{}] {}{}\n", i + 1, r.status, r.criterion, if r.evidence.is_empty() { String::new() } else { format!(" — {}", r.evidence) }));
+        }
+    }
+    if !c.manual_checks.is_empty() {
+        s.push_str("Check yourself before approving\n");
+        for m in &c.manual_checks {
+            s.push_str(&format!("  [ ] {m}\n"));
+        }
     }
     s.push_str(&format!("\napprove: herdr-orchestrator approval approve {}\ndeny:    herdr-orchestrator approval deny {}\n", a.approval_id, a.approval_id));
     s
@@ -273,6 +334,29 @@ policy:
 github:
   draft_pr: true
   auto_merge: false
+  # Notify about failing CI / review comments on open PRs (then `run followup`).
+  # watch_prs: false
+
+# Guardrails on top of policy.
+guard:
+  # Claude agents get a PreToolUse hook: tool calls the policy DENIES are
+  # blocked before they run.
+  claude_hook: true
+  # After a failed check, ask before accepting an attempt that changed only tests.
+  test_only_retry: true
+
+# Token usage of agents in panes, read from their own local session logs.
+usage:
+  session_logs: true
+
+# ADR epics: `herdr-orchestrator epic create --from docs/adr/0007-x.md`.
+epic:
+  # adr_dirs: [docs/adr, docs/decisions]
+  max_tasks: 12
+  task_workflow: epic-task
+  # merged: a dependency counts once merged into the base branch (pull first).
+  # stacked: branch from the dependency's branch; its PR targets that branch.
+  dependency_mode: merged
 
 # Child processes get only these variables (plus HERDR_ORCH_*).
 environment:

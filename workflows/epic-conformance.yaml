@@ -1,0 +1,23 @@
+# epic-conformance: check the finished epic against its ADR. Used by
+# `epic verify`. Read-only; gaps become proposed follow-up tasks that you
+# accept like the original plan.
+version: 1
+name: epic-conformance
+description: Check an epic's combined result against its ADR and propose follow-ups (read-only; used by `epic verify`).
+defaults:
+  timeout: 30m
+
+steps:
+  - id: conformance
+    type: agent
+    skill: adr-conformance
+    output: conformance
+    commit: false
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+    on_failure:
+      retry_step: conformance
+      max_attempts: 1
+      feedback: true

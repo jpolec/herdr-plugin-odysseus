@@ -54,7 +54,10 @@ watch and take over any agent at any time.
   startup / events      │  cli/      clap front-end (thin client)      │
                         │  ui/       ratatui orchestrator pane          │
                         │  daemon/   single-instance engine host        │
-                        │  engine/   scheduler + run driver (FSM)       │
+                        │  engine/   scheduler + run driver (FSM),      │
+                        │            PR follow-ups, gc, stats           │
+                        │  epic/     ADR parsing, plans, acceptance,    │
+                        │            epic lifecycle, dependencies       │
                         │  workflow/ YAML DSL, validation, templates    │
                         │  runners/  AgentRunner: pane, headless, shell,│
                         │            fake                               │
@@ -67,7 +70,7 @@ watch and take over any agent at any time.
                         │  store/    atomic JSON, locks, migrations     │
                         │  recovery/ startup reconciliation             │
                         │  security/ path containment, env, sandbox API │
-                        │  telemetry/ usage records (local only)        │
+                        │  telemetry/ usage records, agent session logs │
                         └──────────────────────────────────────────────┘
                                    │ socket (NDJSON)          │ argv
                                    ▼                          ▼
@@ -287,10 +290,35 @@ wrappers and git global options (`-C`, `-c`, `--git-dir`), and unwraps
   recomputes the chain. Tamper-*evident*, not signed; the event schema reserves
   `signature` for a future signing key. All strings pass through the redactor.
 * Usage: `UsageRecord{input,output,cached tokens, cost_usd, source}` where
-  `source ∈ measured | reported | estimated | unknown`. Pane agents report
-  `unknown` in MVP; headless runners report provider values. No hard cost
-  enforcement is claimed.
+  `source ∈ measured | reported | estimated | unknown`. Headless runners
+  report provider values; Claude and Codex pane agents are read from their
+  own local session logs for each execution's time window
+  (`telemetry/sessions.rs`; `reported` with a native session id, `estimated`
+  when found by worktree). `limits.max_tokens`/`max_cost_usd` ask a human
+  once when known usage exceeds them; unknown usage cannot be enforced.
 * No external telemetry, analytics or crash upload. Ever by default.
+
+### Epics, follow-ups and housekeeping
+
+* `epic/` turns an ADR into work using the ordinary machinery: planning and
+  conformance reviews are tasks running the read-only built-in workflows
+  `epic-plan` / `epic-conformance` (`output: plan` / `conformance`); the
+  epic document (`state/epics/E<n>.json`, same envelope as runs) is advanced
+  by `epic::engine::sync`, called every scheduler tick. Accepted plan tasks
+  are tasks with `epic`, `depends_on`, `acceptance`, `manual_checks` and a
+  `scope`; plan verification commands are spliced into the run's workflow
+  snapshot as `check` steps (`engine::augment_with_checks`). The scheduler
+  claims a task with dependencies only when `dependency_state` says so
+  (`merged`: local ancestor check; `stacked`: base = the dependency branch).
+* `engine/followup.rs`: `run followup` builds a task from a PR's failing
+  checks and review comments (`gh pr view`, `gh api …/comments`) with
+  `continue_run`, so the new run reuses the branch and worktree
+  (`git::attach_worktree` if the worktree was removed) and pushes to the
+  same PR. The optional watcher (`github.watch_prs`) runs in the daemon
+  loop and only notifies.
+* `engine/maintenance.rs`: `gc` candidates (clean worktrees of merged,
+  closed or unselected runs; optionally old failures) and `stats` per
+  implementing runner and workflow.
 
 ## 13. Recovery (see RECOVERY.md)
 
@@ -367,8 +395,8 @@ true` is an explicit, audited escape hatch).
   the tournament use case at the run level.
 * Visible command panes (running `command` steps inside a Herdr pane via a
   wrapper) — roadmap; MVP captures commands directly and shows logs in the UI.
-* Sandbox backends other than `none`; signed audit; persistent approval rules;
-  cost enforcement (limits are advisory and only apply to reported usage).
+* Sandbox backends other than `none`; signed audit; persistent approval rules.
+  Budgets apply only to reported or log-read usage.
 * Policy actions `network` and `env_mutation` are reserved: the orchestrator
   cannot observe them for agent processes; network *commands* are covered by
   the `network` command tag instead.

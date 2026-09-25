@@ -1,8 +1,12 @@
 # Roadmap
 
-Status: proposals, not implemented. Nothing here is promised by 0.1.x. Each
-item says what it builds on in the current code so the cost is visible.
-Ordering is by value for day-to-day use; §1 is the largest and most requested.
+Status: 0.2.0 implemented §1 (epics), §3.1 (Claude hook), §3.2 (PR
+follow-ups), §3.3 (gc), §3.7 (runner statistics) and live token usage for
+pane agents; each is marked **Done** below with where it differs from the
+proposal. Everything else is still a proposal; nothing here is promised.
+Each item says what it builds on in the current code so the cost is visible.
+
+See [VISION.md](VISION.md) for the next big step.
 
 ## 1. ADR → plan → accepted tasks → verified outcome ("epics")
 
@@ -13,6 +17,27 @@ accepted tasks go through the usual workflow. Each task is checked against
 its own acceptance criteria, and the whole epic is checked against the ADR.
 
 `plan` is already the dry-run command, so this feature is called **epic**.
+
+> **Done in 0.2.0** (see WORKFLOWS.md, *Epics*). Differences from the
+> proposal below:
+> - `merged` dependency mode checks locally with `git merge-base
+>   --is-ancestor` whether the dependency's head is in the base branch (merge
+>   the PR and update the local branch); there is no `gh pr view` polling.
+>   `task unblock` overrides a dependency.
+> - The plan is stored only in state (`state/epics/E<n>.json`); no committed
+>   copy under `.ai/herdr-orchestrator/epics/`. `epic edit` edits YAML in
+>   `$EDITOR`.
+> - The TUI Epics screen accepts all open tasks (`y`); partial acceptance and
+>   feedback for re-planning are CLI-only (`--only`, `--feedback`).
+> - Manual checks are listed in approvals and the PR body, but ticking them
+>   is not enforced before `y`.
+> - The conformance review always starts from the base branch and is given
+>   the list of task branches and PRs (dependencies form a DAG, so no single
+>   stacked branch contains everything). It runs when you ask (`epic
+>   verify`), not automatically.
+> - `epic replan` re-plans the whole ADR (keeping accepted keys) rather than
+>   proposing only a diff of changes.
+> - `epic.propose_adr_status` is not implemented.
 
 ### 1.1 Flow
 
@@ -199,7 +224,7 @@ draft PRs. Still missing here:
 | --- | --- | --- |
 | One-click "give this GitHub issue to an agent" | TUI **Issues inbox**: `gh issue list` (optionally filtered by a label such as `agent-ready`), `enter` opens the new-task form pre-filled | The CLI already has `task create --from-issue`; the TUI does not. It never starts tasks by itself. |
 | Attach files to a task | `task create --attach path…` copies files into `<worktree>/.herdr-orchestrator/in/` (git-excluded, size-capped) and lists them in the prompt | Screenshots and logs for bug reports |
-| Live tokens and cost | For pane agents, read the agent's own session log (Claude `~/.claude/projects/…/*.jsonl`, Codex sessions) and record usage as `reported` | Today pane agents report `unknown` (ARCHITECTURE §12). This would make `limits` budgets meaningful. |
+| Live tokens and cost | **Done (tokens):** Claude and Codex session logs are read per step; cost stays unknown for pane agents because the logs carry no price. Proposed: for pane agents, read the agent's own session log (Claude `~/.claude/projects/…/*.jsonl`, Codex sessions) and record usage as `reported` | Today pane agents report `unknown` (ARCHITECTURE §12). This would make `limits` budgets meaningful. |
 | Autonomous mode ("never stops to ask") | **Not as-is.** Instead: persistent, scoped, expiring approval rules, e.g. "push to `herdr/*` and open draft PRs in this repo for 7 days", created from the approval screen and audited | Already listed as an MVP cut. DENY rules can never be weakened this way. |
 | `init` scaffolding | Extend `config init` with `--with-workflow` and `--with-skill` to write commented starter files | Small |
 | Workflow builder UI | Low priority. `workflow validate` plus `plan` already give quick feedback. | — |
@@ -217,25 +242,37 @@ Ordered by value to effort.
    gate. This addresses most of UPSTREAM_REQUESTS §4 for one agent without
    waiting for Herdr. It would be opt-in and clearly labelled, and the
    SECURITY_MODEL would say exactly what it covers.
+   **Done in 0.2.0**, on by default (`guard.claude_hook`): the hook is
+   registered through `claude --settings <worktree>/.herdr-orchestrator/claude-settings.json`
+   (never a file in the project's `.claude/`), and only DENY decisions
+   block; approval-level ones are left to Claude's permission mode and the
+   diff gate.
 2. **Follow-up on PR review and CI.** After a draft PR is opened, the daemon
    watches `gh pr checks` and review comments. Failing CI or new comments
    become a proposed "address feedback" run on the same branch, with the
    comments as `{{feedback}}`. You confirm it with one key. This closes the
    loop after the handoff, which is where most of the manual work is today.
+   **Done in 0.2.0:** `run followup <run>` / `F` in the pane creates the
+   task on the same branch and PR; `github.watch_prs: true` makes the daemon
+   check and notify (it does not create tasks by itself).
 3. **Worktree garbage collection.** `herdr-orchestrator gc` lists finished
    runs whose branch is merged or whose PR is closed, and removes their
    worktrees after confirmation. It never removes a dirty worktree (same
    rule as today).
+   **Done in 0.2.0:** `gc [--yes] [--check-prs] [--failed --days N]`; also
+   unselected variants. Branches are kept.
 4. **`parallel` step type** (reserved today): for example, lint, tests and
    the security scan at the same time, or two reviewers (Claude and Codex)
    whose findings are merged.
+   *Still open.* 0.2.0 ships `dual-review` instead: two independent gated
+   reviewers (Claude, then Codex) one after the other.
 5. **Visible command panes.** Run `check` steps in a Herdr pane so test
    output can be watched live (already on the ARCHITECTURE §19 list).
 6. **Learning from reviews.** Every N runs, summarize recurring review
    findings (same rule, same directory) into a *proposed* change to a
    project skill (`.ai/skills/*.md`), shown as a diff that you approve. It is
    never applied automatically.
-7. **Runner statistics.** Show locally, per runner and workflow: success
+7. **Done in 0.2.0: `stats`.** **Runner statistics.** Show locally, per runner and workflow: success
    rate, average retries, and review verdicts. This helps choose runners and
    the variant mix, using only local data.
 8. **Scheduled tasks.** For example, "update dependencies every Monday"

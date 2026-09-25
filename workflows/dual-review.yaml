@@ -1,0 +1,74 @@
+# dual-review: two independent reviewers from different providers.
+#
+#   Codex implement → tests (retry ×2) → Claude review (gated) → Codex
+#   review (gated) → approval → draft PR
+#
+# Each gated review sends its findings back to the implementer; the second
+# reviewer sees the code only after the first one is satisfied.
+version: 1
+name: dual-review
+description: Implement, test, two independent gated reviews (Claude and Codex), approval, draft PR.
+defaults:
+  timeout: 45m
+
+steps:
+  - id: implement
+    type: agent
+    runner: codex
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: review-claude
+    type: agent
+    runner: claude
+    skill: code-review
+    output: review
+    gate: true
+    prompt: |
+      Independently review the changes on this branch for the task below.
+      Inspect them with `git diff {{base_sha}}` and read the touched files.
+
+      Task:
+      {{task}}
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: review-codex
+    type: agent
+    runner: codex
+    skill: code-review
+    output: review
+    gate: true
+    prompt: |
+      Independently review the changes on this branch for the task below.
+      Another reviewer has already approved them; look for what they missed.
+      Inspect them with `git diff {{base_sha}}` and read the touched files.
+
+      Task:
+      {{task}}
+    on_failure:
+      retry_step: implement
+      max_attempts: 1
+      feedback: true
+
+  - id: approval
+    type: approval
+    reason: Two independent reviewers approved. Approve to open a draft PR.
+
+  - id: pr
+    type: github_pr
+    draft: true
