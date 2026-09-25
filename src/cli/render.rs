@@ -255,6 +255,17 @@ pub fn approval_detail(a: &ApprovalRequest) -> String {
             s.push_str(&format!("  {}. [{}] {}{}\n", i + 1, r.status, r.criterion, if r.evidence.is_empty() { String::new() } else { format!(" — {}", r.evidence) }));
         }
     }
+    if let Some(k) = &c.contract {
+        s.push_str(&format!("Contract   {}{}\n", k.files.join(", "), if k.approved { " (approved, locked)" } else { " — approving locks it" }));
+        s.push_str(&format!("  check    {}\n", k.check));
+        for m in &k.criteria_map {
+            s.push_str(&format!("  covers   {m}\n"));
+        }
+        s.push_str("  red proof (fails on the base, as it must):\n");
+        for l in k.red_excerpt.lines() {
+            s.push_str(&format!("    {l}\n"));
+        }
+    }
     if !c.manual_checks.is_empty() {
         s.push_str("Check yourself before approving\n");
         for m in &c.manual_checks {
