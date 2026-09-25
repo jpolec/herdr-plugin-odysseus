@@ -8,6 +8,7 @@ pub mod handoff;
 pub mod learn;
 pub mod maintenance;
 pub mod receipt;
+pub mod tracker;
 pub mod plan;
 pub mod scheduler;
 mod steps;
@@ -234,6 +235,11 @@ pub fn create_task(ctx: &EngineCtx, nt: NewTask) -> Result<Task> {
         acceptance: nt.acceptance.clone(),
         manual_checks: nt.manual_checks.clone(),
         waiting_on: None,
+        issue: match &nt.source {
+            Some(TaskSource::GithubIssue { number, url, .. }) => Some(crate::github::IssueLink { number: *number, url: url.clone() }),
+            _ => None,
+        },
+        issue_synced: None,
     };
     ctx.store.save_task(&task)?;
     ctx.audit(

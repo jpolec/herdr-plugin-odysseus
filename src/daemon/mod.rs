@@ -69,6 +69,18 @@ pub fn run(ctx: Arc<EngineCtx>, opts: DaemonOptions) -> Result<()> {
         if last_watch.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(3600)) {
             let _ = crate::engine::learn::remind(&ctx, global.config.guard.learn_reminder);
         }
+        if last_watch.is_none_or(|t| t.elapsed() >= global.config.github.watch_interval.as_duration()) {
+            let repos: std::collections::BTreeSet<std::path::PathBuf> = ctx.store.list_tasks().unwrap_or_default().into_iter().filter(|t| t.issue.is_some() || t.epic.is_some()).map(|t| t.repo_root).collect();
+            for r in repos {
+                if ctx.load_config(Some(&r)).map(|c| c.config.github.tracker.auto_sync).unwrap_or(false) {
+                    if let Ok(rep) = crate::engine::tracker::sync(&ctx, &r) {
+                        for e in rep.errors {
+                            tracing::warn!("tracker sync {}: {e}", r.display());
+                        }
+                    }
+                }
+            }
+        }
         if global.config.github.watch_prs && last_watch.is_none_or(|t| t.elapsed() >= global.config.github.watch_interval.as_duration()) {
             last_watch = Some(Instant::now());
             match crate::engine::followup::watch_prs(&ctx, 14) {

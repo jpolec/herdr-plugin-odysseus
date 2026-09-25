@@ -202,7 +202,69 @@ pub fn feedback_from_json(url: &str, view: &serde_json::Value, inline: &serde_js
     f
 }
 
+/// An issue on GitHub linked to a task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IssueLink {
+    pub number: u64,
+    pub url: String,
+}
+
+fn issue_number(url: &str) -> Option<u64> {
+    url.trim().trim_end_matches('/').rsplit('/').next()?.parse().ok()
+}
+
 impl Gh {
+    /// `owner/repo` of the repository's GitHub remote.
+    pub fn repo_slug(&self, repo_dir: &Path) -> Result<String> {
+        let out = self.call(repo_dir, &["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], Duration::from_secs(60))?;
+        let s = out.trim().to_string();
+        if s.split('/').count() != 2 || s.chars().any(|c| c.is_whitespace()) {
+            bail!("unexpected repository name {s:?}");
+        }
+        Ok(s)
+    }
+
+    /// Milestone number with this title, created if missing.
+    pub fn ensure_milestone(&self, repo_dir: &Path, slug: &str, title: &str, description: &str) -> Result<u64> {
+        let out = self.call(repo_dir, &["api", &format!("repos/{slug}/milestones?state=all&per_page=100")], Duration::from_secs(60))?;
+        let list: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_default();
+        if let Some(n) = list.as_array().into_iter().flatten().find(|m| m["title"] == title).and_then(|m| m["number"].as_u64()) {
+            return Ok(n);
+        }
+        let out = self.call(repo_dir, &["api", &format!("repos/{slug}/milestones"), "-f", &format!("title={title}"), "-f", &format!("description={description}")], Duration::from_secs(60))?;
+        let v: serde_json::Value = serde_json::from_str(out.trim()).context("parsing milestone")?;
+        v["number"].as_u64().context("milestone without number")
+    }
+
+    pub fn ensure_label(&self, repo_dir: &Path, label: &str) -> Result<()> {
+        self.call(repo_dir, &["label", "create", label, "--force", "--color", "1f6feb", "--description", "managed by herdr-orchestrator"], Duration::from_secs(60)).map(|_| ())
+    }
+
+    pub fn issue_create(&self, repo_dir: &Path, title: &str, body: &str, label: &str, milestone: Option<&str>) -> Result<IssueLink> {
+        let mut args = vec!["issue", "create", "--title", title, "--body", body, "--label", label];
+        if let Some(m) = milestone {
+            args.extend(["--milestone", m]);
+        }
+        let out = self.call(repo_dir, &args, Duration::from_secs(60))?;
+        let url = out.lines().rev().find(|l| l.trim_start().starts_with("https://")).map(|s| s.trim().to_string()).context("gh issue create did not print a URL")?;
+        Ok(IssueLink { number: issue_number(&url).context("issue URL without number")?, url })
+    }
+
+    pub fn issue_comment(&self, repo_dir: &Path, number: u64, body: &str) -> Result<()> {
+        self.call(repo_dir, &["issue", "comment", &number.to_string(), "--body", body], Duration::from_secs(60)).map(|_| ())
+    }
+
+    pub fn issue_list(&self, repo_dir: &Path, label: &str) -> Result<Vec<Issue>> {
+        let out = self.call(repo_dir, &["issue", "list", "--label", label, "--state", "open", "--limit", "50", "--json", "number,title,body,url"], Duration::from_secs(60))?;
+        serde_json::from_str(out.trim()).context("parsing gh issue list")
+    }
+
+    /// Add an issue to a Projects (v2) board. Needs the `project` scope
+    /// (`gh auth refresh -s project`).
+    pub fn project_add(&self, repo_dir: &Path, owner: &str, number: u64, url: &str) -> Result<()> {
+        self.call(repo_dir, &["project", "item-add", &number.to_string(), "--owner", owner, "--url", url], Duration::from_secs(60)).map(|_| ())
+    }
+
     pub fn pr_feedback(&self, repo_dir: &Path, url: &str) -> Result<PrFeedback> {
         let (slug, n) = parse_pr_url(url).with_context(|| format!("not a GitHub pull request URL: {url}"))?;
         let view = self.call(repo_dir, &["pr", "view", url, "--json", "number,url,state,reviews,comments,statusCheckRollup"], Duration::from_secs(60))?;

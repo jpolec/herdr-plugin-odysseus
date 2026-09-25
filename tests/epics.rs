@@ -229,3 +229,34 @@ fn reject_decline_and_edit_plans() {
     std::fs::write(h.repo.join("docs/adr/0007-rate-limiting.md"), format!("{ADR}\nAmended.\n")).unwrap();
     assert_eq!(epic::adr_drifted(&e), Some(true));
 }
+
+#[test]
+fn epic_tasks_become_github_issues_with_status_comments() {
+    let mut h = setup("stacked");
+    let gh = fake_gh(h.dir.path());
+    h.rebuild(|c| c.gh = herdr_orchestrator::github::Gh { bin: gh.clone() });
+    h.project_file("config.yaml", "epic:\n  task_workflow: acc-only\n  dependency_mode: stacked\ngithub:\n  tracker:\n    project: o/3\n");
+    epic::create_epic(&h.ctx, &h.repo, std::path::Path::new("docs/adr/0007-rate-limiting.md"), Some("fake-plan".into()), "test").unwrap();
+    wait_epic(&mut h, "E1", EpicStatus::Proposed);
+    let e = epic::accept(&h.ctx, "E1", AcceptOptions { only: Some(vec!["T3".into()]), ..accept_opts("fake-success", "fake-acceptance-met") }).unwrap();
+    let r = herdr_orchestrator::engine::tracker::sync(&h.ctx, &h.repo).unwrap();
+    assert_eq!(r.issues_created, vec!["https://github.com/o/r/issues/11"]);
+    assert!(r.errors.iter().any(|e| e.contains("gh auth refresh -s project")), "{:?}", r.errors);
+    let tid = e.tasks["T3"].clone();
+    assert_eq!(h.ctx.store.load_task(&tid).unwrap().issue.unwrap().number, 11);
+    let log = std::fs::read_to_string(h.dir.path().join("gh.log")).unwrap();
+    assert!(log.contains("--milestone E1: 7. Rate limiting") && log.contains("- [ ] part T3 works"), "{log}");
+    h.settle(&tid);
+    let r = herdr_orchestrator::engine::tracker::sync(&h.ctx, &h.repo).unwrap();
+    assert_eq!(r.comments, 1);
+    assert!(std::fs::read_to_string(h.dir.path().join("gh.log")).unwrap().contains("issue comment 11 --body ✅ Done"));
+    // Posted once.
+    assert_eq!(herdr_orchestrator::engine::tracker::sync(&h.ctx, &h.repo).unwrap().comments, 0);
+    // Import of agent-ready issues skips linked ones.
+    std::fs::write(h.dir.path().join("gh-issues.json"), r#"[{"number":11,"title":"linked","body":"","url":"https://github.com/o/r/issues/11"},{"number":42,"title":"Fix the thing","body":"details","url":"https://github.com/o/r/issues/42"}]"#).unwrap();
+    let todo = herdr_orchestrator::engine::tracker::importable(&h.ctx, &h.repo, "agent-ready").unwrap();
+    assert_eq!(todo.iter().map(|i| i.number).collect::<Vec<_>>(), vec![42]);
+    let t = herdr_orchestrator::engine::tracker::import(&h.ctx, &h.repo, &todo, TaskOptions { workflow: Some("quick-task".into()), runner: Some("fake-success".into()), ..Default::default() }).unwrap();
+    assert_eq!(t[0].issue.as_ref().unwrap().number, 42);
+    assert!(herdr_orchestrator::engine::tracker::importable(&h.ctx, &h.repo, "agent-ready").unwrap().is_empty());
+}
