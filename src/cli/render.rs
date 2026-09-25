@@ -313,6 +313,8 @@ defaults:
 scheduler:
   max_parallel_runs: 4
   max_parallel_agents: 8
+  # Tasks with overlapping --scope do not run at the same time.
+  avoid_conflicts: true
 
 limits:
   max_agents_per_run: 4
@@ -347,6 +349,16 @@ github:
   auto_merge: false
   # Notify about failing CI / review comments on open PRs (then `run followup`).
   # watch_prs: false
+  # Issues + milestones for epics (`tracker sync`), import of labelled issues.
+  # tracker:
+  #   import_label: agent-ready
+  #   project: owner/3        # needs: gh auth refresh -s project
+
+# Production errors → reproduce-first fix tasks (`incidents`); token from
+# SENTRY_AUTH_TOKEN only.
+# sentry:
+#   org: my-org
+#   project: my-project
 
 # Guardrails on top of policy.
 guard:
@@ -355,6 +367,10 @@ guard:
   claude_hook: true
   # After a failed check, ask before accepting an attempt that changed only tests.
   test_only_retry: true
+  # Hand agents that are busy without progress to you (never fails them).
+  watchdog:
+    stall_after: 20m
+    idle_after: 15m
 
 # Token usage of agents in panes, read from their own local session logs.
 usage:

@@ -259,6 +259,29 @@ setup).
 
 ---
 
+### 21. Agent games its own tests
+
+- **Vector:** to make a check pass, an agent weakens or rewrites the tests
+  it is judged by.
+- **Mitigation:** default rules for deleted tests, test-runner config and
+  added skips (0.2.0); with `contract-first`, the tests are written first,
+  must fail on the base, are approved by a human and locked (diff-gate hash
+  check for every agent, real-time refusal for Claude's file tools); the PR
+  carries a receipt that `receipt verify` re-checks.
+- **Residual:** a shell edit to a contract file is caught at the next diff
+  gate, not while it runs; a weak contract passes weak code (the approver
+  sees the tests and the red output; mutation checks are not implemented).
+
+### 22. Hostile text from integrations
+
+- **Vector:** GitHub issue bodies (`tracker import`, `task create
+  --from-issue`), PR review comments (`run followup`) and Sentry error
+  messages (`incidents task`) carry attacker-controlled text into prompts.
+- **Mitigation:** treated as untrusted: prompt-only, never argv or env;
+  Sentry data minimised to the exception and in-app frames and redacted;
+  the resulting changes go through the same policy, review and approval as
+  any task.
+
 ## Known gaps (tracked)
 
 - No OS sandbox (`ExecutionSandbox` only `none`).

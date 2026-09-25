@@ -72,6 +72,10 @@ Global log:
 | `plan_edited` | `epic edit` (new plan SHA-256) |
 | `conformance_requested`, `conformance_reviewed` | `epic verify` queued / its result (open follow-up keys) |
 | `epic_done` | every accepted task of the epic finished |
+| `shift_started`, `shift_ended` | `shift start` (deadline, budget) / the shift ended at its deadline or token budget (reason, inbox size) |
+| `learn_started` | `learn` queued a task (number of findings) |
+| `issue_created` | `tracker sync` created a GitHub issue for a task (URL, epic) |
+| `incident_task_created` | `incidents task` queued a fix task (provider, issue, URL) |
 
 Run logs:
 
@@ -104,6 +108,15 @@ Run logs:
 | `agent_tool_checked` | Claude `PreToolUse` hook: a non-allow decision for a tool call (`blocked: true` for DENY) |
 | `pr_feedback_detected` | PR watcher found new failing checks or review comments |
 | `pr_followup_created` | `run followup`: follow-up task created (task, PR, failing checks, comments) |
+| `agent_stuck`, `agent_progressing` | the watchdog handed a busy agent to a human (reason, pane) / the agent made progress again |
+| `contract_written` | validated `output: contract` (files, check, criteria map) |
+| `contract_probe` | the contract's check ran for the red proof (argv, exit code) |
+| `contract_not_red` | the contract already passed on the base; sent back to its writer |
+| `contract_locked` | contract hashed and locked (SHA-256, files, check, commit; `eval_case` for replays) |
+| `contract_approved`, `contract_amended` | the first approval after the lock approved it / the approver edited contract files first (old and new hash) |
+| `eval_case_recorded` | `eval record`: the run became an eval case (case id, contract SHA-256) |
+| `approval_batch` | `approval batch` approved this run's ship-it step (approval id, risk and reasons) |
+| `branch_update_merged` | `run update` merged the base into the branch (onto, SHA, conflicted files) |
 | `files_changed` | changed paths with +/- counts at a policy gate |
 | `command_requested` | a command/check is about to be evaluated (argv, shell, source) |
 | `command_started` | process spawned (argv, pid, cwd, env **names** only) |

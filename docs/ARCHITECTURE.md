@@ -55,12 +55,15 @@ watch and take over any agent at any time.
                         │  ui/       ratatui orchestrator pane          │
                         │  daemon/   single-instance engine host        │
                         │  engine/   scheduler + run driver (FSM),      │
-                        │            PR follow-ups, gc, stats           │
+                        │            PR follow-ups, gc, stats, inbox,   │
+                        │            receipts, learn, tracker, Sentry,  │
+                        │            branch updates                     │
                         │  epic/     ADR parsing, plans, acceptance,    │
-                        │            epic lifecycle, dependencies       │
+                        │            contracts, epic lifecycle, deps    │
+                        │  eval/     repository benchmark (replays)     │
                         │  workflow/ YAML DSL, validation, templates    │
                         │  runners/  AgentRunner: pane, headless, shell,│
-                        │            fake                               │
+                        │            fake; pane watchdog                │
                         │  checks/   argv command execution, capture    │
                         │  policies/ rule engine + command normalizer   │
                         │  approvals/ durable approval requests         │
@@ -319,6 +322,30 @@ wrappers and git global options (`-C`, `-c`, `--git-dir`), and unwraps
 * `engine/maintenance.rs`: `gc` candidates (clean worktrees of merged,
   closed or unselected runs; optionally old failures) and `stats` per
   implementing runner and workflow.
+
+### Contracts, benchmark, inbox and integrations (0.3.0)
+
+* Contracts live on the run (`Run.contract`: file hashes, check, criteria
+  map, commit, red output, approval). `engine/steps.rs` validates
+  `output: contract`, runs the red proof (`run_probe`), locks, and checks
+  the hashes at every diff gate and before pushing; `cli/hooks.rs` hands the
+  locked paths to the Claude hook (`agent_hook::decide_with_locks`).
+  `engine/receipt.rs` re-verifies a receipt from git (`git::file_at`) and
+  the run's audit chain.
+* `eval/`: cases and replays under `state/eval/{cases,runs}/`. A replay is
+  a task with variants (one per runner) and `TaskOptions.eval_case`; the
+  driver's `prepare()` seeds and locks the case's contract right after the
+  worktree is created.
+* `engine/digest.rs`: risk assessment from recorded facts, the inbox, batch
+  approval of workflow-step approvals, and the night shift
+  (`state/shift.json`), enforced every scheduler tick.
+* `runners/watchdog.rs`: pure state machine fed by the pane runner's wait
+  loop (`AgentEvent::Stuck` / `Progressing`).
+* `engine/learn.rs` (findings → instructions task), `engine/tracker.rs`
+  (GitHub milestones/issues/comments/import via `gh`),
+  `engine/incidents.rs` (Sentry via `curl`, token on stdin),
+  `engine/update.rs` (conflict-aware claiming by `scope`; `run update` =
+  `git::merge_no_ff` + a `continue_run` task diffed against the new base).
 
 ## 13. Recovery (see RECOVERY.md)
 

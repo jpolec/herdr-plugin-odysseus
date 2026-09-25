@@ -50,6 +50,11 @@
         "poll_interval_ms": {
           "type": "integer",
           "minimum": 50
+        },
+        "avoid_conflicts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Do not start a task whose scope overlaps an active run's scope or changed files."
         }
       }
     },
@@ -238,6 +243,31 @@
             }
           ],
           "default": "10m"
+        },
+        "tracker": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "auto_sync": {
+              "type": "boolean",
+              "default": false
+            },
+            "label": {
+              "type": "string",
+              "default": "herdr-orchestrator"
+            },
+            "import_label": {
+              "type": "string",
+              "default": "agent-ready"
+            },
+            "project": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Projects (v2) board as owner/number; needs the gh `project` scope."
+            }
+          }
         }
       }
     },
@@ -429,6 +459,72 @@
             "type": "string"
           },
           "description": "Globs that count as tests or test/check configuration."
+        },
+        "watchdog": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Pane agents busy without progress are handed to a human (never failed).",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "check_every": {
+              "description": "Duration: `45m`, `1h30m` or seconds.",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ],
+              "default": "60s"
+            },
+            "stall_after": {
+              "description": "Duration: `45m`, `1h30m` or seconds.",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ],
+              "default": "20m"
+            },
+            "idle_after": {
+              "description": "Duration: `45m`, `1h30m` or seconds.",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ],
+              "default": "15m"
+            },
+            "burn_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 150000
+            },
+            "repeat_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 4
+            }
+          }
+        },
+        "learn_reminder": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 20,
+          "description": "Notify (at most daily) when this many findings piled up since the last `learn`; 0 = never."
         }
       }
     },
@@ -474,6 +570,37 @@
           ],
           "default": "merged",
           "description": "merged: a dependency counts when its commits are in the base branch (local check). stacked: branch from the one unmerged dependency."
+        }
+      }
+    },
+    "sentry": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Production errors from Sentry (`incidents`). Token only from SENTRY_AUTH_TOKEN.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "default": "https://sentry.io"
+        },
+        "org": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "string",
+          "default": "is:unresolved"
+        },
+        "workflow": {
+          "type": "string",
+          "default": "contract-first"
         }
       }
     }

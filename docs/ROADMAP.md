@@ -2,8 +2,11 @@
 
 Status: 0.2.0 implemented §1 (epics), §3.1 (Claude hook), §3.2 (PR
 follow-ups), §3.3 (gc), §3.7 (runner statistics) and live token usage for
-pane agents; each is marked **Done** below with where it differs from the
-proposal. Everything else is still a proposal; nothing here is promised.
+pane agents. 0.3.0 implemented §3.6 (learning from reviews), the GitHub
+issue row of §2 (partly) and the new §4 (contract-first, benchmark, inbox
+and night shift, watchdog, tracker, Sentry, conflicts). Each is marked
+**Done** below with where it differs from the proposal. Everything else is
+still a proposal; nothing here is promised.
 Each item says what it builds on in the current code so the cost is visible.
 
 See [VISION.md](VISION.md) for the next big step.
@@ -222,7 +225,7 @@ draft PRs. Still missing here:
 
 | Cezar feature | Proposal here | Notes |
 | --- | --- | --- |
-| One-click "give this GitHub issue to an agent" | TUI **Issues inbox**: `gh issue list` (optionally filtered by a label such as `agent-ready`), `enter` opens the new-task form pre-filled | The CLI already has `task create --from-issue`; the TUI does not. It never starts tasks by itself. |
+| One-click "give this GitHub issue to an agent" | TUI **Issues inbox**: `gh issue list` (optionally filtered by a label such as `agent-ready`), `enter` opens the new-task form pre-filled | **Partly done in 0.3.0:** `tracker import --label agent-ready [--yes]` queues labelled issues as tasks (CLI; no TUI issues screen yet). `task create --from-issue` still works for one issue. |
 | Attach files to a task | `task create --attach path…` copies files into `<worktree>/.herdr-orchestrator/in/` (git-excluded, size-capped) and lists them in the prompt | Screenshots and logs for bug reports |
 | Live tokens and cost | **Done (tokens):** Claude and Codex session logs are read per step; cost stays unknown for pane agents because the logs carry no price. Proposed: for pane agents, read the agent's own session log (Claude `~/.claude/projects/…/*.jsonl`, Codex sessions) and record usage as `reported` | Today pane agents report `unknown` (ARCHITECTURE §12). This would make `limits` budgets meaningful. |
 | Autonomous mode ("never stops to ask") | **Not as-is.** Instead: persistent, scoped, expiring approval rules, e.g. "push to `herdr/*` and open draft PRs in this repo for 7 days", created from the approval screen and audited | Already listed as an MVP cut. DENY rules can never be weakened this way. |
@@ -272,6 +275,11 @@ Ordered by value to effort.
    findings (same rule, same directory) into a *proposed* change to a
    project skill (`.ai/skills/*.md`), shown as a diff that you approve. It is
    never applied automatically.
+   **Done in 0.3.0:** `learn` queues a task from review findings, unmet
+   criteria, PR comments and guardrail hits; it edits `AGENTS.md`,
+   `CLAUDE.md` or `.ai/skills/`, which the default policy puts in front of
+   you. `guard.learn_reminder` notifies when findings pile up; it is not
+   started automatically.
 7. **Done in 0.2.0: `stats`.** **Runner statistics.** Show locally, per runner and workflow: success
    rate, average retries, and review verdicts. This helps choose runners and
    the variant mix, using only local data.
@@ -282,3 +290,32 @@ Ordered by value to effort.
    `sandbox-exec` profiles on macOS, bubblewrap on Linux.
 10. **Signed audit** using the `signature` field the event schema already
     reserves.
+
+## 4. Delivery at scale (0.3.0)
+
+1. **Contract-first delivery** ([VISION](VISION.md)). **Done (phases 1–2):**
+   `output: contract`, red proof, lock (diff gate + Claude hook), approval
+   with evidence, amendment, receipt and `receipt verify`. *Open:* ranking
+   variants against one contract inside a single task, mutation check of
+   contracts, signed receipts.
+2. **Repository benchmark.** **Done:** `eval record/run/report`; the oracle
+   is the recorded, approved contract. *Limit:* it ranks runners across
+   cases; within one task, variants are still compared by a human.
+3. **Morning inbox and night shift.** **Done:** `inbox` with risk levels and
+   reasons, `approval batch` (workflow-step approvals only), `shift` with a
+   deadline and a token budget.
+4. **Watchdog.** **Done** for agents in panes (`guard.watchdog`). *Limits:*
+   headless agents are covered by their timeouts only; each check re-reads
+   the agent's session log, so very short `check_every` values cost I/O.
+5. **Issue tracker.** **Done for GitHub:** milestones, issues, status
+   comments, `Closes #N`, import. *Partial:* on a Projects board issues are
+   only added (`project item-add`, needs `gh auth refresh -s project`); status
+   columns are not moved. *Not implemented:* Jira (it has a free plan for up
+   to 10 users; it would need an API token and its REST API).
+6. **Production errors.** **Done for Sentry:** `incidents list/show/task`,
+   reproduce-first tasks with minimised, redacted data.
+7. **Conflicts and branch updates.** **Done:** conflict-aware scheduling by
+   `scope`, `run update` (merge, agent resolves conflicts). *Partial:*
+   updates are started by a human; nothing detects on its own that a base
+   branch moved.
+

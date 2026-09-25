@@ -167,6 +167,7 @@ tags: git, git_force_push, git_push, shell
 | Before PR creation | `github_pr` | deny → `blocked`; approval → ask unless covered |
 | `run pr` (human CLI handoff) | `git_push`, `github_pr` | deny refuses; require_approval is satisfied by the human invoking the command (audited as `approval_granted`) |
 | Claude `PreToolUse` hook (`guard.claude_hook`), before each tool call of a Claude agent | `Bash` → the command (as a shell script, *without* the `command` action, so `approve-shell-mode` does not apply; tag and text rules do); `Write`/`Edit`/`MultiEdit`/`NotebookEdit` → `write` of the path (worktree-relative when inside); `Read` → `read` of the path | deny → the call is blocked and the reason goes to the agent (`agent_tool_checked`); require_approval and allow → no decision: Claude's own permission mode and the diff gate handle it, so nothing is asked twice |
+| Contract lock (runs with a locked contract) | at the diff gate: each contract file's current content against its locked SHA-256; in the Claude hook: `Write`/`Edit`/`MultiEdit`/`NotebookEdit` of a contract path (rule `contract-lock`, source `run`) | changed hash → DENY, run `blocked` before anything is committed or pushed; in the hook → the call is refused. The PR step re-checks the hashes before pushing |
 
 Only non-`allow` decisions for individual files are recorded in the run (to
 avoid thousands of "allow" entries); every other evaluation is recorded.
@@ -183,6 +184,23 @@ in approvals and the audit like any other rule:
 
 A run also asks once when its reported usage exceeds `limits.max_tokens` or
 `limits.max_cost_usd` (`budget_exceeded`); denying stops it as `blocked`.
+
+### Risk levels in the inbox
+
+`inbox` and `approval batch` rate each run from the rules that fired (plus
+diff size, reviews, acceptance, retries, the watchdog and a contract; see
+`src/engine/digest.rs`). Rule ids that make a run **high** risk:
+`approve-migrations`, `approve-infra`, `approve-ci-cd`,
+`approve-auth-security-config`,
+`approve-agent-instructions-and-orchestrator-config`,
+`approve-infra-commands`, `approve-history-rewrite`,
+`approve-privilege-escalation`, `approve-large-deletes`,
+`approve-large-line-deletes`. **Medium**: `approve-test-deletion`,
+`approve-test-runner-config`, `approve-disabled-tests`,
+`guard-test-only-retry`, `task-scope`, `approve-large-lockfile-changes`,
+`approve-network-commands`, `approve-shell-mode`. Risk never changes a
+decision: `approval batch` only approves workflow `approval` steps, never a
+policy question.
 
 ## Default policy summary
 

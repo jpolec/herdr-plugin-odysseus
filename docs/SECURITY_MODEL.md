@@ -96,6 +96,25 @@ orchestrator binary with the run's state and config directories. It
 and makes no decision — the diff gate remains the backstop. Turn it off
 with `guard.claude_hook: false`.
 
+#### Contract lock (contract-first runs)
+
+Once a contract is locked (see WORKFLOWS.md, `output: contract`), its files
+are protected in two layers: Claude's file tools are refused in real time by
+the hook (`contract-lock`), and for every agent the diff gate compares the
+files' content with the locked SHA-256 — any difference is a DENY, the run
+is `blocked` and nothing is committed or pushed. A shell command that edits
+a contract file (any agent, including Claude's `Bash`) is **not** stopped
+while it runs; it is caught by the hash check at the next diff gate, and the
+PR step re-checks the hashes before pushing. The receipt in the PR body and
+`receipt verify` rest on the local hash-chained audit log: tamper-evident on
+this machine, **not** a signature another machine can verify.
+
+#### Watchdog
+
+The watchdog only observes (pane text, worktree fingerprint, session-log
+token counts) and, when it fires, moves the step to `awaiting_human`. It
+never types into the agent, interrupts it or fails the step.
+
 ### What we can observe vs. enforce
 
 | Capability | Orchestrator commands | Agent-internal actions |
@@ -183,6 +202,10 @@ provides.
 - Approvals from the CLI/TUI record the human (`$USER`) as actor. `run pr`
   invoked by a human is itself the approval and is audited as such.
 - Optional `limits.approval_timeout`: expiry **denies**, never approves.
+- `approval batch --max-risk …` (and `A` in the pane) approves only
+  workflow `approval` steps ("ship it?") whose run is at or below that risk
+  level; it never approves a policy question (REQUIRE_APPROVAL from a rule),
+  and each batch approval is audited with the risk and its reasons.
 
 ## 7. Local data protection
 
@@ -213,3 +236,18 @@ Token usage of pane agents is read from the agents' own local session logs
 only usage counters and model names are kept, nothing leaves the machine.
 Session ids are never used as paths unless they are plain identifiers.
 Off with `usage.session_logs: false`.
+
+Integrations, all opt-in and started by you (or by `auto_sync`):
+
+- **GitHub tracker** (`tracker sync/import`) uses `gh`. Issue text imported
+  as tasks is untrusted and only reaches prompts. Issues and comments the
+  orchestrator writes are redacted. Adding items to a Projects board needs
+  the `project` token scope, which the orchestrator never requests itself.
+- **Sentry** (`incidents`) calls the Sentry API with `curl`. The token is
+  read only from `SENTRY_AUTH_TOKEN` and passed to `curl` as a config on
+  stdin, never in its arguments (not visible in `ps`); `sentry.url` must be
+  https. Data is minimised: the issue's title, culprit, counts, first/last
+  seen, `release`/`environment`/`runtime`/`os.name` tags and each
+  exception's type, message (≤ 500 chars, redacted) and in-app stack frames.
+  Requests, users, breadcrumbs, contexts and other tags are never read into
+  a prompt.

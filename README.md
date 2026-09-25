@@ -114,7 +114,26 @@ loop for you and enforces your rules along the way.
   local session logs; `usage`, the dashboard and `run show` show it per task
   and step, and `limits.max_tokens` asks before a run goes over budget.
 - **After the PR.** Failing CI and review comments become a follow-up on the
-  same branch with one key (`F`).
+  same branch with one key (`F`); `run update` merges a moved `main` into the
+  branch (never a rebase or force push) and an agent resolves conflicts.
+- **Tests first, then code.** With `contract-first` an agent writes the tests,
+  which must fail on the current code. You approve those ~60 lines instead of
+  reading the whole implementation, and they are locked while another agent
+  makes them pass. The PR carries a receipt that `receipt verify` re-checks.
+- **Work overnight, review in the morning.** `shift start --until 07:00
+  --budget 2M` runs the queue unattended; `inbox` then lists what needs you,
+  with a risk level and its reasons, and low-risk "ship it?" steps can be
+  approved in one go.
+- **Your repo's own benchmark.** Finished contract-first tasks become eval
+  cases; `eval run --runners claude,codex` replays them on other agents against
+  the same locked tests and ranks them by passes, tokens and time.
+- **Stuck agents surface early.** A watchdog notices an agent that burns
+  tokens without changing anything and hands it to you instead of waiting for
+  the timeout.
+- **GitHub and Sentry.** Epics become milestones and issues with status
+  comments; `agent-ready` issues become tasks; a Sentry error becomes a task
+  that first reproduces it with a failing test, then fixes it. `learn` turns
+  recurring review findings into proposed agent instructions.
 - **Approvals with context.** Changed files, diff stats, checks, the policy rule
   that fired and exactly what will happen when you say yes.
 - **Tournament mode.** Run a task ×3 (`codex, codex, claude`), compare the diffs,
@@ -206,6 +225,10 @@ without asking me.
 | `variant-review` | for `--variants N`: implement → tests → review in every variant; you compare and choose |
 | `dual-review` | Codex implements → tests → Claude review (gated) → Codex review (gated) → approval → draft PR |
 | `epic-task` | used for tasks accepted from an ADR plan: implement → tests → plan checks → acceptance review per criterion (gated) → approval → draft PR |
+| `contract-first` | tests first (must fail) → you approve them → locked → implement until they pass → full tests → review → approval → draft PR with a receipt |
+
+Internal: `epic-plan`, `epic-conformance` (epics), `eval-task` (benchmark
+replays), `update-verify` / `update-resolve` (`run update`).
 
 Workflows are short YAML files; add your own in `.ai/herdr-orchestrator/workflows/`.
 See [WORKFLOWS](docs/WORKFLOWS.md) and the [example project](examples/).
@@ -222,6 +245,23 @@ herdr-orchestrator epic verify E1        # result vs. the ADR; gaps become propo
 
 Tasks start when their dependencies are merged (or stacked on their branch
 with `epic.dependency_mode: stacked`). In the pane: `e` for epics.
+
+## Contract-first
+
+```sh
+herdr-orchestrator task create "Rate-limit webhooks per API key" -w contract-first
+herdr-orchestrator approval show <id>     # the tests, their check, the failing output: approve = lock
+herdr-orchestrator receipt verify '#14'   # after the PR: contract unchanged, audit chain intact
+herdr-orchestrator eval record '#14'      # keep it as a benchmark case
+```
+
+## Night shift and morning inbox
+
+```sh
+herdr-orchestrator shift start --until 07:00 --budget 2000000   # queue pauses at 07:00 or 2M tokens
+herdr-orchestrator inbox                                        # what needs you, risk and reasons
+herdr-orchestrator approval batch --max-risk low                # every low-risk "ship it?" at once
+```
 
 ## Questions
 
@@ -267,9 +307,11 @@ logs). `herdr-orchestrator config paths` prints every location.
 
 | Screen | Keys |
 | --- | --- |
-| Dashboard | `n` new task · `enter` inspect · `a` approvals · `e` epics · `r` retry · `x` cancel · `d` diff · `f` focus agent pane · `F` PR follow-up · `p` pause queue · `q` quit |
-| Run detail | `↑↓` step · `enter`/`l` log · `d` diff · `f` focus agent · `a` approval · `F` PR follow-up · `r` retry · `x` cancel · `esc` back |
+| Dashboard | `n` new task · `enter` inspect · `i` inbox · `a` approvals · `e` epics · `r` retry · `x` cancel · `d` diff · `f` focus agent pane · `F` PR follow-up · `u` update branch · `p` pause queue · `q` quit |
+| Run detail | `↑↓` step · `enter`/`l` log · `d` diff · `f` focus agent · `a` approval · `F` PR follow-up · `u` update branch · `r` retry · `x` cancel · `esc` back |
+| Inbox | `↑↓` scroll · `a` approvals · `A` approve all low-risk "ship it?" steps · `e` epics · `esc` back |
 | Epics | `↑↓` select · `enter` plan · `y` accept open tasks · `n` reject · `g` re-plan · `v` verify against the ADR · `esc` back |
+| Approvals | `↑↓` select · `enter` open · `A` approve all low-risk "ship it?" steps · `esc` back |
 | Approval | `y` approve once · `n` deny · `c` cancel run · `d` diff · `f` open agent pane · `esc` back |
 | New task | `tab` next field · `←→` choose · `ctrl+s` create · `esc` cancel |
 
@@ -299,6 +341,14 @@ herdr-orchestrator task unblock 14                                 # start despi
 herdr-orchestrator run followup '#12'                              # PR comments + failing CI → follow-up
 herdr-orchestrator gc [--yes]                                      # remove merged/closed worktrees
 herdr-orchestrator stats                                           # per runner: success, retries, tokens
+herdr-orchestrator task create "…" -w contract-first | receipt verify '#14' [--at main]
+herdr-orchestrator eval record '#14' | eval run --runners claude,codex [--yes] | eval report
+herdr-orchestrator inbox [--since 12h] | approval batch --max-risk low
+herdr-orchestrator shift start --until 07:00 --budget 2000000 | shift status | shift stop
+herdr-orchestrator learn [--list]                                  # findings → proposed AGENTS.md rules
+herdr-orchestrator tracker sync | tracker import --label agent-ready [--yes]
+herdr-orchestrator incidents list | incidents show BACKEND-1A | incidents task BACKEND-1A
+herdr-orchestrator run update '#12' [--onto main]                  # merge the base, resolve conflicts
 herdr-orchestrator doctor
 herdr-orchestrator task create "smoke" --runner fake-success --foreground   # CI, no daemon
 ```
