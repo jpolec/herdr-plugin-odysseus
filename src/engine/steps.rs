@@ -1202,6 +1202,7 @@ impl<'a> RunDriver<'a> {
             s.runner = runner.clone();
             s.step_id = Some(step.id.clone());
             s.branch = self.run.git.branch.clone();
+            s.repo = Some(self.run.repo_root.display().to_string());
             let d = self.policy.evaluate(&s);
             if d.decision != Decision::Allow {
                 self.record_policy(Some(&step.id), Some(exec_id), &d);
@@ -1234,6 +1235,7 @@ impl<'a> RunDriver<'a> {
             deleted_files: Some(diff.files.iter().filter(|f| f.change == "deleted").count()),
             deleted_lines: Some(diff.deletions),
             step_id: Some(step.id.clone()),
+            repo: Some(self.run.repo_root.display().to_string()),
             ..Default::default()
         };
         let sd = self.policy.evaluate(&summary);
@@ -1283,7 +1285,7 @@ impl<'a> RunDriver<'a> {
         if !crate::git::is_dirty(&worktree)? {
             return Ok(None);
         }
-        let s = Subject { action: Some(Action::GitCommit), step_id: Some(step.id.clone()), branch: self.run.git.branch.clone(), ..Default::default() };
+        let s = Subject { action: Some(Action::GitCommit), step_id: Some(step.id.clone()), branch: self.run.git.branch.clone(), repo: Some(self.run.repo_root.display().to_string()), ..Default::default() };
         let d = self.policy.evaluate(&s);
         self.record_policy(Some(&step.id), Some(exec_id), &d);
         if d.decision == Decision::Deny {
@@ -1392,7 +1394,7 @@ impl<'a> RunDriver<'a> {
             let b = self.run.git.base_ref.clone();
             if b == "HEAD" { "main".into() } else { b }
         });
-        let d = self.policy.evaluate(&Subject { action: Some(Action::GithubPr), branch: Some(branch.clone()), step_id: Some(step.id.clone()), ..Default::default() });
+        let d = self.policy.evaluate(&Subject { action: Some(Action::GithubPr), branch: Some(branch.clone()), step_id: Some(step.id.clone()), repo: Some(self.run.repo_root.display().to_string()), ..Default::default() });
         self.record_policy(Some(&step.id), Some(&exec_id), &d);
         if self.run.dry_run {
             self.audit("dry_run", Actor::orchestrator(), Some(&step.id), serde_json::json!({"would": format!("open {}PR {branch} → {base}", if draft {"draft "} else {""}), "policy": d.decision.as_str()}));

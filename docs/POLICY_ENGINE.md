@@ -56,7 +56,7 @@ Unknown keys are rejected. A rule must have at least one criterion among
 | `runners` | wildcards | runner name matches |
 | `steps` | wildcards | workflow step id matches |
 | `branches` | globs | run branch matches |
-| `repos` | globs | repository path matches |
+| `repos` | globs | the run's repository root matches (set on every run subject: worktree creation, commands, the diff gate, commits, PRs and the Claude hook; `policy check` uses `--repo`, the Herdr context, then the cwd) |
 | `shell` | bool | the command does / does not run through a shell |
 | `min_lines_changed` | int | file's `+lines` + `-lines` ≥ N |
 | `min_deleted_files` | int | diff summary: deleted files ≥ N |

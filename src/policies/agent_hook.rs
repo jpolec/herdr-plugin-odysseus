@@ -84,7 +84,14 @@ pub fn decide(set: &PolicySet, input: &Value, worktree: &Path) -> Option<(Policy
 /// As [`decide`], and writes to `locked` paths (a run's approved contract)
 /// are denied.
 pub fn decide_with_locks(set: &PolicySet, input: &Value, worktree: &Path, locked: &[String]) -> Option<(PolicyDecision, Option<Value>)> {
-    let subject = subject_for(input, worktree)?;
+    decide_in_repo(set, input, worktree, locked, None)
+}
+
+/// As [`decide_with_locks`], with the run's repository root on the subject
+/// so `repos:` rules match in the hook exactly as they do at the diff gate.
+pub fn decide_in_repo(set: &PolicySet, input: &Value, worktree: &Path, locked: &[String], repo: Option<&Path>) -> Option<(PolicyDecision, Option<Value>)> {
+    let mut subject = subject_for(input, worktree)?;
+    subject.repo = repo.map(|r| r.display().to_string());
     let mut d = set.evaluate(&subject);
     let writes = matches!(subject.action, Some(Action::Write) | Some(Action::Delete));
     if writes && subject.path.as_ref().is_some_and(|p| locked.iter().any(|l| l == p)) {

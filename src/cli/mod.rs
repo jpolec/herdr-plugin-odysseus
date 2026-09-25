@@ -1274,6 +1274,7 @@ fn policy_cmd(app: &App, c: PolicyCmd) -> Result<i32> {
             };
             s.runner = runner;
             s.branch = branch;
+            s.repo = app.repo_opt().map(|r| r.display().to_string());
             let d = set.evaluate(&s);
             if app.cli_json {
                 app.print_json(&serde_json::json!({"decision": d, "normalized": s.command}))?;
