@@ -12,6 +12,7 @@ defaults:
 steps:
   - id: plan
     type: agent
+    runner: claude-deep
     skill: adr-planning
     output: plan
     commit: false

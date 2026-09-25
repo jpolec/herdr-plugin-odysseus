@@ -414,6 +414,25 @@
             "items": {
               "type": "string"
             }
+          },
+          "model": {
+            "type": "string",
+            "description": "Agent model: `opus`, `sonnet`, a model id (Claude, OpenCode: --model; Codex, Gemini: -m)."
+          },
+          "effort": {
+            "enum": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "description": "Claude: --effort (low\u2026max). Codex: model_reasoning_effort (minimal\u2026xhigh)."
+          },
+          "advisor": {
+            "type": "string",
+            "description": "Claude only: advisor model (fable, opus, sonnet, a model id) or `off`. Unset = the user's Claude settings."
           }
         }
       }

@@ -18,6 +18,7 @@ defaults:
 steps:
   - id: contract
     type: agent
+    runner: claude-deep
     skill: contract-writing
     output: contract
     prompt: |

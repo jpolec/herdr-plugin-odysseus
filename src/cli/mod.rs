@@ -2092,7 +2092,8 @@ fn runners_cmd(app: &App) -> Result<i32> {
                     (_, Some(b)) => if crate::process::which(b).is_some() { "installed".into() } else { format!("{b} not on PATH") },
                     _ => "-".into(),
                 };
-                println!("{:<24} {:<9} {:<10} {}", n, format!("{:?}", p.mode).to_lowercase(), p.kind.unwrap_or_default(), installed);
+                let tuning = [p.model.as_ref().map(|m| format!("model {m}")), p.effort.as_ref().map(|e| format!("effort {e}")), p.advisor.as_ref().map(|a| format!("advisor {a}"))].into_iter().flatten().collect::<Vec<_>>().join(", ");
+                println!("{:<24} {:<9} {:<10} {:<18} {}", n, format!("{:?}", p.mode).to_lowercase(), p.kind.unwrap_or_default(), installed, tuning);
             }
             Err(e) => println!("{n:<24} ERROR {e:#}"),
         }
