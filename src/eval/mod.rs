@@ -42,6 +42,9 @@ pub struct EvalCase {
 pub struct EvalRun {
     pub eval_id: String,
     pub runners: Vec<String>,
+    /// Memory arms compared (`history`, `no-history`); empty = config.
+    #[serde(default)]
+    pub arms: Vec<String>,
     /// case id → task id (one task, one variant per runner).
     pub tasks: BTreeMap<String, String>,
     pub created_at: Timestamp,
@@ -143,9 +146,33 @@ pub fn estimate(ctx: &EngineCtx, runners: &[String], cases: usize) -> Result<Vec
 
 /// Queue a replay: one task per case, one variant per runner, each from the
 /// case's base commit with its contract pre-approved and locked.
-pub fn start(ctx: &EngineCtx, case_ids: &[String], runners: &[String]) -> Result<EvalRun> {
+/// Parse `--arms history,no-history` into per-arm memory switches.
+pub fn parse_arms(arms: &[String]) -> Result<Vec<bool>> {
+    arms.iter()
+        .map(|a| match a.as_str() {
+            "history" => Ok(true),
+            "no-history" => Ok(false),
+            other => bail!("unknown arm {other:?} (history, no-history)"),
+        })
+        .collect()
+}
+
+pub fn start(ctx: &EngineCtx, case_ids: &[String], runners: &[String], arms: &[String]) -> Result<EvalRun> {
     if runners.is_empty() {
         bail!("give at least one runner (--runners claude,codex)");
+    }
+    let switches = parse_arms(arms)?;
+    // Every runner × every arm is one variant of the same task.
+    let mut variant_runners = vec![];
+    let mut variant_memory = vec![];
+    for r in runners {
+        if switches.is_empty() {
+            variant_runners.push(r.clone());
+        }
+        for m in &switches {
+            variant_runners.push(r.clone());
+            variant_memory.push(*m);
+        }
     }
     let mut tasks = BTreeMap::new();
     let eval_id = next_id(ctx, "runs", "V")?;
@@ -164,10 +191,11 @@ pub fn start(ctx: &EngineCtx, case_ids: &[String], runners: &[String]) -> Result
                 options: TaskOptions {
                     workflow: Some(EVAL_WORKFLOW.into()),
                     base_ref: Some(case.base_sha.clone()),
-                    variants: runners.len() as u32,
-                    variant_runners: runners.to_vec(),
+                    variants: variant_runners.len() as u32,
+                    variant_runners: variant_runners.clone(),
                     runner: (runners.len() == 1).then(|| runners[0].clone()),
                     eval_case: Some(case.case_id.clone()),
+                    variant_memory: variant_memory.clone(),
                     ..Default::default()
                 },
                 via: "eval".into(),
@@ -181,7 +209,7 @@ pub fn start(ctx: &EngineCtx, case_ids: &[String], runners: &[String]) -> Result
     if tasks.is_empty() {
         bail!("no runnable cases");
     }
-    let run = EvalRun { eval_id, runners: runners.to_vec(), tasks, created_at: now() };
+    let run = EvalRun { eval_id, runners: runners.to_vec(), arms: arms.to_vec(), tasks, created_at: now() };
     write_doc(&dir(ctx, "runs").join(format!("{}.json", run.eval_id)), "runs", &run)?;
     Ok(run)
 }
@@ -241,7 +269,12 @@ pub fn report(ctx: &EngineCtx, eval_id: &str) -> Result<Vec<EvalRow>> {
         for rid in &t.run_ids {
             let r = ctx.store.load_run(rid)?;
             let runner = r.steps.iter().find(|e| e.kind == StepKind::Agent).and_then(|e| e.runner.clone()).or_else(|| ev.runners.get(r.variant_index as usize).cloned()).unwrap_or_else(|| "?".into());
-            by.entry(runner).or_default().push(r);
+            let arm = match r.memory {
+                Some(true) => " [history]",
+                Some(false) => " [no-history]",
+                None => "",
+            };
+            by.entry(format!("{runner}{arm}")).or_default().push(r);
         }
     }
     let mut out = vec![];

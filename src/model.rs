@@ -206,6 +206,9 @@ pub struct TaskOptions {
     /// Replay of an eval case: its contract is seeded and locked.
     #[serde(default)]
     pub eval_case: Option<String>,
+    /// Per-variant project memory switch (eval arms); empty = config.
+    #[serde(default)]
+    pub variant_memory: Vec<bool>,
 }
 
 fn one() -> u32 {
@@ -227,6 +230,7 @@ impl Default for TaskOptions {
             extra_commands: vec![],
             continue_run: None,
             eval_case: None,
+            variant_memory: vec![],
         }
     }
 }
@@ -405,6 +409,9 @@ pub struct Run {
     /// The locked contract (tests written before the implementation).
     #[serde(default)]
     pub contract: Option<Contract>,
+    /// Project memory on/off for this run (eval arms); `None` = config.
+    #[serde(default)]
+    pub memory: Option<bool>,
 }
 
 /// Tests that define "done" for a task, proven red on the base, approved by
@@ -866,6 +873,7 @@ mod tests {
             selected: false,
             pr_feedback_seen: None,
             contract: None,
+            memory: None,
         }
     }
 }

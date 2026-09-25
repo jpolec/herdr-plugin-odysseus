@@ -575,6 +575,18 @@ herdr-orchestrator epic verify E1                             # conformance revi
 In the pane: `e` opens the Epics screen (`enter` plan, `y` accept open
 tasks, `n` reject, `g` re-plan, `v` verify).
 
+## Project memory in prompts
+
+Agent steps with `output: summary`, `contract` or `plan` get a "Prior work in
+this repository" section appended to their prompt on a fresh start (not on
+a retry that reuses the same agent, which already has it). Review,
+acceptance and conformance steps never get it. See `memory.*` in the
+configuration, `herdr-orchestrator history --task N` to preview it, and
+`note add` for notes. A `summary` result may carry
+`"notes_for_others": ["…"]`: up to five short facts other agents working in
+the repository should know; they are stored as notes scoped to the files
+the run changed.
+
 ## Validation
 
 ```bash

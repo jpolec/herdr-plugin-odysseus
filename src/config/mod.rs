@@ -45,6 +45,8 @@ pub struct Config {
     pub epic: EpicConfig,
     /// Production errors from Sentry (`incidents`). Token: SENTRY_AUTH_TOKEN.
     pub sentry: crate::engine::incidents::SentryConfig,
+    /// Project memory: prior work put into agent prompts.
+    pub memory: MemoryConfig,
     /// Runner profile overrides keyed by runner name.
     pub runners: BTreeMap<String, RunnerProfileConfig>,
     /// Named check commands (`tests`, `lint`, `security`) as argv arrays.
@@ -72,6 +74,7 @@ impl Default for Config {
             guard: Default::default(),
             epic: Default::default(),
             sentry: Default::default(),
+            memory: Default::default(),
             runners: BTreeMap::new(),
             checks: BTreeMap::new(),
         }
@@ -415,6 +418,26 @@ impl Default for EpicConfig {
             task_workflow: "epic-task".into(),
             dependency_mode: DependencyMode::Merged,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct MemoryConfig {
+    /// Put "prior work in this repository" into implementing, contract and
+    /// planning agents' prompts (never reviewers').
+    pub history: bool,
+    /// At most this many records.
+    pub max_records: usize,
+    /// Character budget of the section (~4 characters per token).
+    pub max_chars: usize,
+    /// Also list runs working in the repository right now.
+    pub active: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self { history: true, max_records: 8, max_chars: 6000, active: true }
     }
 }
 
