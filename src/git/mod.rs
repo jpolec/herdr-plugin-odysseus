@@ -383,6 +383,16 @@ pub fn worktree_fingerprint(worktree: &Path) -> String {
     crate::store::sha256_hex(format!("{head}\n{num}\n{sizes}").as_bytes())
 }
 
+/// Content of `path` at commit `rev`, if it exists there.
+pub fn file_at(repo: &Path, rev: &str, path: &str) -> Option<Vec<u8>> {
+    if rev.starts_with('-') || path.starts_with('-') {
+        return None;
+    }
+    let spec = format!("{rev}:{path}");
+    let out = std::process::Command::new("git").args(["cat-file", "blob", &spec]).current_dir(repo).output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
 /// `true` when `commit` is reachable from `rev` (it has been merged into it).
 pub fn is_ancestor(repo: &Path, commit: &str, rev: &str) -> bool {
     git(repo, &["merge-base", "--is-ancestor", commit, rev]).is_ok()

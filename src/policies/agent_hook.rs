@@ -78,8 +78,22 @@ pub fn subject_for(input: &Value, worktree: &Path) -> Option<Subject> {
 /// Decide one tool call. Returns the decision (for the audit trail) and the
 /// JSON Claude expects on stdout, which is `None` when we have no objection.
 pub fn decide(set: &PolicySet, input: &Value, worktree: &Path) -> Option<(PolicyDecision, Option<Value>)> {
+    decide_with_locks(set, input, worktree, &[])
+}
+
+/// As [`decide`], and writes to `locked` paths (a run's approved contract)
+/// are denied.
+pub fn decide_with_locks(set: &PolicySet, input: &Value, worktree: &Path, locked: &[String]) -> Option<(PolicyDecision, Option<Value>)> {
     let subject = subject_for(input, worktree)?;
-    let d = set.evaluate(&subject);
+    let mut d = set.evaluate(&subject);
+    let writes = matches!(subject.action, Some(Action::Write) | Some(Action::Delete));
+    if writes && subject.path.as_ref().is_some_and(|p| locked.iter().any(|l| l == p)) {
+        d.decision = Decision::Deny;
+        d.reason = "contract-lock (this test file is part of the approved contract; make the code pass it instead of changing it)".into();
+        d.matched.push(super::MatchedRule { rule_id: "contract-lock".into(), decision: Decision::Deny, reason: Some("approved contract".into()), source: "run".into() });
+    }
+    // A Bash command that edits a locked file in place is not caught here
+    // (not parseable in general); the diff gate's hash check catches it.
     let out = (d.decision == Decision::Deny).then(|| {
         json!({
             "hookSpecificOutput": {
@@ -130,6 +144,20 @@ mod tests {
         assert!(decide(&set, &call("Bash", json!({"command": "true"})), wt).unwrap().1.is_none());
         assert!(decide(&set, &call("Glob", json!({"pattern": "*"})), wt).is_none());
         assert!(decide(&set, &json!({"tool_name": "Bash"}), wt).is_none());
+    }
+
+    #[test]
+    fn contract_files_are_locked() {
+        let set = PolicySet::builtin_default().unwrap();
+        let locked = vec!["tests/contract_test.rs".to_string()];
+        let v = call("Edit", json!({"file_path": "/w/tests/contract_test.rs", "old_string": "a", "new_string": "b"}));
+        let (d, out) = decide_with_locks(&set, &v, Path::new("/w"), &locked).unwrap();
+        assert_eq!(d.decision, Decision::Deny);
+        assert_eq!(out.unwrap()["hookSpecificOutput"]["permissionDecision"], "deny");
+        let other = call("Edit", json!({"file_path": "/w/src/lib.rs"}));
+        assert!(decide_with_locks(&set, &other, Path::new("/w"), &locked).unwrap().1.is_none());
+        let read = call("Read", json!({"file_path": "/w/tests/contract_test.rs"}));
+        assert!(decide_with_locks(&set, &read, Path::new("/w"), &locked).unwrap().1.is_none(), "reading the contract is fine");
     }
 
     #[test]

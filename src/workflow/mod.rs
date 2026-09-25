@@ -65,6 +65,9 @@ pub enum AgentOutput {
     Acceptance,
     /// Epic result vs. its ADR, with proposed follow-ups. Read-only.
     Conformance,
+    /// Executable tests for the task written *before* the implementation;
+    /// they must fail on the base ("red proof") and are locked afterwards.
+    Contract,
 }
 
 impl AgentOutput {
@@ -75,6 +78,7 @@ impl AgentOutput {
             Self::Plan => "plan",
             Self::Acceptance => "acceptance",
             Self::Conformance => "conformance",
+            Self::Contract => "contract",
         }
     }
     /// Outputs whose step must not change any file.
@@ -137,6 +141,9 @@ pub enum StepSpec {
         env: BTreeMap<String, String>,
         #[serde(default)]
         cwd: Option<String>,
+        /// Run the check of the run's locked contract (see `output: contract`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        contract: bool,
     },
     Approval {
         reason: String,
@@ -268,6 +275,14 @@ impl Workflow {
                     template::check(prompt, &earlier).with_context(ctx)?;
                     if *gate && !matches!(output, AgentOutput::Review | AgentOutput::Acceptance) {
                         bail!("{}: `gate: true` requires `output: review` or `output: acceptance`", ctx());
+                    }
+                }
+                StepSpec::Check { contract: true, check, command, .. } => {
+                    if check.is_some() || !command.is_empty() {
+                        bail!("{}: `contract: true` runs the locked contract's own check; drop `check:`/`command:`", ctx());
+                    }
+                    if !self.steps[..i].iter().any(|s| matches!(s.spec, StepSpec::Agent { output: AgentOutput::Contract, .. })) {
+                        bail!("{}: `contract: true` needs an earlier agent step with `output: contract`", ctx());
                     }
                 }
                 StepSpec::Check { check: Some(name), command, .. } => {

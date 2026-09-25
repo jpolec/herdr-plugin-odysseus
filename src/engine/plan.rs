@@ -61,6 +61,9 @@ pub fn plan(ctx: &EngineCtx, repo: &Path, task_title: &str, workflow: Option<&st
                             m => format!("run {name} ({m:?}) as a child process"),
                         };
                         let mut notes = vec![];
+                        if *output == crate::workflow::AgentOutput::Contract {
+                            notes.push("writes the contract; its check must FAIL now (red proof), then it is locked".into());
+                        }
                         if *output == crate::workflow::AgentOutput::Review {
                             notes.push(if *gate { "structured review, gated" } else { "structured review" }.to_string());
                         }
@@ -72,6 +75,10 @@ pub fn plan(ctx: &EngineCtx, repo: &Path, task_title: &str, workflow: Option<&st
                     }
                     Err(e) => line.would = format!("FAIL: {e:#}"),
                 }
+            }
+            StepSpec::Check { contract: true, .. } => {
+                line.would = "run the locked contract's own check (it must pass now)".into();
+                line.note = Some("contract files are locked: any change to them is denied".into());
             }
             StepSpec::Command { .. } | StepSpec::Check { .. } => {
                 let (argv, shell, source) = match step.named_check() {

@@ -401,12 +401,117 @@ impl<'a> RunDriver<'a> {
                 return Ok(o);
             }
         }
+        if gate_failure.is_none() && *output == AgentOutput::Contract {
+            let v = self.exec_mut(&exec_id).structured.clone().unwrap_or_default();
+            match self.lock_contract(step, &exec_id, &v, &worktree)? {
+                ContractResult::Locked => {}
+                ContractResult::Retry(reason, feedback) => gate_failure = Some((reason, feedback)),
+                ContractResult::Stop(o) => return Ok(o),
+            }
+        }
         if let Some((reason, feedback)) = gate_failure {
             self.finish_exec(&exec_id, StepStatus::Failed, Some(reason.clone()))?;
             return Ok(StepOutcome::Failed { reason, feedback });
         }
         self.finish_exec(&exec_id, StepStatus::Succeeded, None)?;
         Ok(StepOutcome::Succeeded { output: output_text })
+    }
+
+    /// Red proof and lock: the contract's check must FAIL on the code as it
+    /// is (a contract that already passes proves nothing); then the files'
+    /// hashes are recorded and every later change to them is denied.
+    fn lock_contract(&mut self, step: &Step, exec_id: &str, v: &serde_json::Value, worktree: &std::path::Path) -> Result<ContractResult> {
+        let files: Vec<String> = v["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str().map(String::from)).collect();
+        let check: Vec<String> = match v.get("check").and_then(|c| serde_json::from_value::<Vec<String>>(c.clone()).ok()) {
+            Some(c) => c,
+            None => match crate::checks::resolve("tests", worktree, &self.cfg.config.checks) {
+                Some(r) => r.argv,
+                None => return Ok(ContractResult::Retry("the contract names no `check` and no `tests` check is configured".into(), "Add a `check` argv to the result file: the command that runs exactly your contract tests.".into())),
+            },
+        };
+        let (passed, excerpt) = match self.run_probe(step, exec_id, &check, worktree)? {
+            Ok(x) => x,
+            Err(o) => return Ok(ContractResult::Stop(o)),
+        };
+        if passed {
+            self.audit("contract_not_red", Actor::orchestrator(), Some(&step.id), serde_json::json!({"check": check}));
+            return Ok(ContractResult::Retry(
+                format!("contract check `{}` already passes before any implementation", crate::policies::command::display_argv(&check)),
+                format!("Your contract tests pass on the current code, so they do not pin down the new behaviour. Make them test what the task adds, so they fail now and pass once it is implemented.\nCheck output:\n{excerpt}"),
+            ));
+        }
+        let mut hashes = std::collections::BTreeMap::new();
+        for f in &files {
+            let b = std::fs::read(worktree.join(f)).with_context(|| format!("reading contract file {f}"))?;
+            hashes.insert(f.clone(), format!("sha256:{}", crate::store::sha256_hex(&b)));
+        }
+        let criteria_map = v.get("criteria_map").and_then(|m| serde_json::from_value(m.clone()).ok()).unwrap_or_default();
+        let c = Contract {
+            sha256: Contract::combined_hash(&hashes),
+            files: hashes,
+            check: check.clone(),
+            criteria_map,
+            commit: crate::git::head_sha(worktree).ok(),
+            red_excerpt: excerpt,
+            locked_at: now(),
+            approval_id: None,
+            approved_by: None,
+            approved_at: None,
+        };
+        self.audit("contract_locked", Actor::orchestrator(), Some(&step.id), serde_json::json!({"sha256": c.sha256, "files": c.files, "check": c.check, "commit": c.commit}));
+        self.run.contract = Some(c);
+        self.save()?;
+        Ok(ContractResult::Locked)
+    }
+
+    /// Run a probe command (red/green proofs) with the normal policy
+    /// pre-flight. `Ok(Ok((passed, excerpt)))`, or `Ok(Err(outcome))` to stop.
+    fn run_probe(&mut self, step: &Step, exec_id: &str, argv: &[String], worktree: &std::path::Path) -> Result<std::result::Result<(bool, String), StepOutcome>> {
+        let display = crate::policies::command::display_argv(argv);
+        let mut subject = Subject::command(argv, false);
+        subject.step_id = Some(step.id.clone());
+        subject.branch = self.run.git.branch.clone();
+        let d = self.policy.evaluate(&subject);
+        self.record_policy(Some(&step.id), Some(exec_id), &d);
+        match d.decision {
+            Decision::Deny => {
+                let why = format!("policy denied `{display}`: {}", d.reason);
+                self.finish_exec(exec_id, StepStatus::Failed, Some(why.clone()))?;
+                return Ok(Err(StepOutcome::Blocked(why)));
+            }
+            Decision::RequireApproval => match self.request_approval(step, exec_id, ApprovalKind::Policy, format!("Contract check requires approval: {}", d.reason), Some(format!("execute `{display}`")), vec![d.clone()])? {
+                Approval::Granted => {}
+                Approval::Denied(why) => {
+                    self.finish_exec(exec_id, StepStatus::Failed, Some(why.clone()))?;
+                    return Ok(Err(StepOutcome::Failed { reason: why, feedback: String::new() }));
+                }
+                Approval::Cancelled => return Ok(Err(StepOutcome::Cancelled)),
+            },
+            Decision::Allow => {}
+        }
+        let sandbox = crate::security::sandbox::sandbox_for(self.cfg.config.sandbox.kind)?;
+        let run_argv = sandbox.wrap(argv, worktree)?;
+        let env = self.cfg.config.environment.build(std::env::vars(), &self.orch_env(&step.id));
+        let log = self.ctx.store.layout.run_logs_dir(&self.run.run_id).join(format!("{exec_id}.probe.log"));
+        let spec = crate::process::Spec::new(run_argv, worktree).env(env).timeout(self.cfg.config.limits.command_timeout.as_duration()).log(log);
+        let out = crate::process::run(&spec, Some(&self.cancel))?;
+        if out.cancelled {
+            return Ok(Err(StepOutcome::Cancelled));
+        }
+        let combined = format!("{}{}", out.stdout_str(), out.stderr_str());
+        let excerpt = crate::checks::excerpt(&redact_str(&combined), 10, 30, 4000);
+        self.audit("contract_probe", Actor::orchestrator(), Some(&step.id), serde_json::json!({"argv": argv, "exit_code": out.exit_code, "timed_out": out.timed_out}));
+        Ok(Ok((out.success(), excerpt)))
+    }
+
+    /// Contract files whose content differs from the locked hashes.
+    pub(super) fn contract_violations(&self, worktree: &std::path::Path) -> Vec<String> {
+        let Some(c) = &self.run.contract else { return vec![] };
+        c.files
+            .iter()
+            .filter(|(p, h)| std::fs::read(worktree.join(p)).map(|b| format!("sha256:{}", crate::store::sha256_hex(&b)) != **h).unwrap_or(true))
+            .map(|(p, _)| p.clone())
+            .collect()
     }
 
     /// Claude agents get a `PreToolUse` hook (via `--settings`) that checks
@@ -537,6 +642,7 @@ impl<'a> RunDriver<'a> {
             AgentOutput::Review => parse_review(raw),
             AgentOutput::Acceptance => crate::epic::parse_acceptance(raw, self.task.acceptance.len()),
             AgentOutput::Conformance => crate::epic::parse_conformance(raw),
+            AgentOutput::Contract => crate::epic::parse_contract(raw, self.task.acceptance.len(), &self.worktree()?),
             AgentOutput::Plan => {
                 let workflows: Vec<String> = self.catalog.workflows().map(|w| w.into_iter().map(|x| x.name).collect()).unwrap_or_default();
                 let existing: Vec<String> = self.task.epic.as_ref().and_then(|l| self.ctx.store.load_epic(&l.epic_id).ok()).map(|e| e.tasks.keys().cloned().collect()).unwrap_or_default();
@@ -569,6 +675,7 @@ impl<'a> RunDriver<'a> {
                 let n = v["tasks"].as_array().map(|a| a.len()).unwrap_or(0);
                 ("plan_proposed", serde_json::json!({"tasks": n, "plan_sha256": crate::store::sha256_hex(crate::store::canonical_json(v).as_bytes())}), None)
             }
+            AgentOutput::Contract => ("contract_written", serde_json::json!({"files": v["files"], "check": v["check"], "criteria_map": v["criteria_map"]}), None),
             AgentOutput::Conformance => {
                 let count = |st: &str| v["points"].as_array().map(|a| a.iter().filter(|c| c["status"] == st).count()).unwrap_or(0);
                 ("conformance_reviewed", serde_json::json!({"covered": count("covered"), "partial": count("partial"), "missing": count("missing"), "followups": v["followups"].as_array().map(|a| a.len()).unwrap_or(0)}), None)
@@ -660,7 +767,17 @@ impl<'a> RunDriver<'a> {
         let worktree = self.worktree()?;
         let tctx = self.template_ctx(&step.id, None);
         // Resolve argv (named check or explicit command).
-        let (mut argv, source) = if let Some(name) = step.named_check() {
+        let contract_check = matches!(step.spec, StepSpec::Check { contract: true, .. });
+        let (mut argv, source) = if contract_check {
+            match &self.run.contract {
+                Some(c) => (c.check.clone(), Some("locked contract".to_string())),
+                None => {
+                    let exec_id = self.new_exec(step)?;
+                    self.finish_exec(&exec_id, StepStatus::Failed, Some("no locked contract in this run".into()))?;
+                    return Ok(StepOutcome::Blocked("`contract: true` check but no contract was locked".into()));
+                }
+            }
+        } else if let Some(name) = step.named_check() {
             match crate::checks::resolve(name, &worktree, &self.cfg.config.checks) {
                 Some(r) => (r.argv, Some(r.source)),
                 None => {
@@ -959,6 +1076,17 @@ impl<'a> RunDriver<'a> {
         match self.request_approval(step, &exec_id, ApprovalKind::WorkflowStep, reason, pending_action, vec![])? {
             Approval::Granted => {
                 let approval_id = self.exec_mut(&exec_id).approval_id.clone().unwrap_or_default();
+                // The first approval after the contract was locked approves it.
+                if self.run.contract.as_ref().is_some_and(|c| c.approval_id.is_none()) {
+                    let a = self.ctx.store.load_approval(&approval_id).ok();
+                    if let Some(c) = self.run.contract.as_mut() {
+                        c.approval_id = Some(approval_id.clone());
+                        c.approved_by = a.as_ref().and_then(|a| a.decided_by.clone());
+                        c.approved_at = a.and_then(|a| a.decided_at).or(Some(now()));
+                    }
+                    let c = self.run.contract.clone().unwrap();
+                    self.audit("contract_approved", Actor::human(c.approved_by.clone()), Some(&step.id), serde_json::json!({"sha256": c.sha256, "approval_id": approval_id}));
+                }
                 if let Some(n) = next {
                     self.run.approval_cover = Some(ApprovalCover {
                         step_id: n.id.clone(),
@@ -1016,6 +1144,9 @@ impl<'a> RunDriver<'a> {
             serde_json::json!({"files": diff.files.iter().map(|f| serde_json::json!({"path": f.path, "change": f.change, "+": f.insertions, "-": f.deletions})).collect::<Vec<_>>(), "insertions": diff.insertions, "deletions": diff.deletions}),
         );
         let mut denies = vec![];
+        for p in self.contract_violations(&worktree) {
+            denies.push(format!("{p} (contract file changed after it was locked)"));
+        }
         let mut asks: Vec<(String, PolicyDecision)> = vec![];
         let runner = self.exec_mut(exec_id).runner.clone();
         let needs_content = self.policy.needs_added_lines();
@@ -1219,6 +1350,14 @@ impl<'a> RunDriver<'a> {
         }
         let draft = draft.unwrap_or(self.cfg.config.github.draft_pr);
         let branch = self.run.git.branch.clone().context("no branch")?;
+        if let Some(w) = self.run.git.worktree_path.clone() {
+            let bad = self.contract_violations(&w);
+            if !bad.is_empty() && !self.run.dry_run {
+                let why = format!("contract files changed after they were locked: {}", bad.join(", "));
+                self.finish_exec(&exec_id, StepStatus::Failed, Some(why.clone()))?;
+                return Ok(StepOutcome::Blocked(why));
+            }
+        }
         let base = base.map(String::from).or(self.cfg.config.github.base.clone()).unwrap_or_else(|| {
             let b = self.run.git.base_ref.clone();
             if b == "HEAD" { "main".into() } else { b }
@@ -1356,6 +1495,28 @@ impl<'a> RunDriver<'a> {
         }
         let u = crate::telemetry::run_agent_usage(&self.run);
         b.push_str(&format!("\nAgent usage: {}.\n", crate::telemetry::tokens_display(&u)));
+        if let Some(c) = &self.run.contract {
+            b.push_str(&format!(
+                "\n### Contract\n\nTests written before the implementation, failing on the base, approved{} and locked. The implementation did not change them.\n\n",
+                match (&c.approved_by, c.approved_at) {
+                    (Some(who), Some(at)) => format!(" by {who} at {}", at.format("%Y-%m-%d %H:%M UTC")),
+                    _ => String::new(),
+                }
+            ));
+            for (p, h) in &c.files {
+                b.push_str(&format!("- `{p}` `{}`\n", &h[..h.len().min(19)]));
+            }
+            b.push_str(&format!("\nCheck: `{}`\n", crate::policies::command::display_argv(&c.check)));
+            let head = self.ctx.audit.read(Some(&self.run.run_id)).ok().and_then(|e| e.last().map(|x| x.hash.clone())).unwrap_or_default();
+            b.push_str(&format!(
+                "\n```\nherdr-orchestrator-receipt: v1\nrun: {}\ncontract_sha256: {}\ncontract_commit: {}\napproval: {}\naudit_head: {}\n```\n",
+                self.run.run_id,
+                c.sha256,
+                c.commit.clone().unwrap_or_default(),
+                c.approval_id.clone().unwrap_or_default(),
+                head
+            ));
+        }
         b.push_str(&format!("\nAudit: `herdr-orchestrator audit verify {}`\n", self.run.run_id));
         redact_str(&b)
     }
@@ -1396,6 +1557,13 @@ fn scope_decision(path: &str, scope: &[String]) -> PolicyDecision {
         matched: vec![crate::policies::MatchedRule { rule_id: "task-scope".into(), decision: Decision::RequireApproval, reason: Some(reason.clone()), source: "task".into() }],
         reason: format!("task-scope ({reason})"),
     }
+}
+
+enum ContractResult {
+    Locked,
+    /// Back to the contract writer with (reason, feedback).
+    Retry(String, String),
+    Stop(StepOutcome),
 }
 
 enum GateResult {

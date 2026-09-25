@@ -1,0 +1,95 @@
+# contract-first: tests before code, locked once you approve them.
+#
+#   contract (tests; must FAIL on the base) → your approval of the contract
+#   → implement (contract locked) → contract check green (retry ×3)
+#   → full tests → review → approval → draft PR with a verifiable receipt
+#
+# You review the contract — what must be true — instead of every line of
+# the implementation. The orchestrator guarantees the implementation was
+# held to exactly that contract: any change to a contract file is denied
+# (in real time for Claude, at the diff gate for every agent), and the PR
+# records the contract's hash, your approval and the audit head.
+version: 1
+name: contract-first
+description: Tests first (proven red, approved, locked), then the implementation; PR carries a receipt.
+defaults:
+  timeout: 45m
+
+steps:
+  - id: contract
+    type: agent
+    skill: contract-writing
+    output: contract
+    prompt: |
+      Write the contract for the task below: executable tests that pass only
+      once the task is done. Do not implement the task.
+
+      Task:
+      {{task}}
+
+      Acceptance criteria (map every one to at least one test):
+      {{acceptance}}
+
+      {{feedback}}
+    on_failure:
+      retry_step: contract
+      max_attempts: 2
+      feedback: true
+
+  - id: approve-contract
+    type: approval
+    reason: Review the contract (the tests). Once approved it is locked for the implementation.
+
+  - id: implement
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      Make the approved contract pass. The contract files are locked: any
+      change to them is refused.
+      {{contract}}
+
+      {{feedback}}
+
+  - id: contract-green
+    type: check
+    contract: true
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 3
+      feedback: true
+
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: implement
+      max_attempts: 2
+      feedback: true
+
+  - id: review
+    type: agent
+    runner: claude
+    skill: code-review
+    output: review
+    prompt: |
+      Review the implementation on this branch (`git diff {{base_sha}}`). The
+      tests in the contract were approved separately and are locked; focus on
+      the implementation, and flag it if it games the tests instead of doing
+      the task.
+
+      Task:
+      {{task}}
+
+      {{contract}}
+
+  - id: approval
+    type: approval
+    reason: Contract green, tests pass, reviewed. Approve to open a draft PR.
+
+  - id: pr
+    type: github_pr
+    draft: true

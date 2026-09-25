@@ -99,7 +99,8 @@ fn claude_pretool(app: &App, run_id: &str) -> Result<Option<serde_json::Value>> 
     let cfg = ctx.load_config(Some(&run.repo_root))?;
     let set = ctx.policy_for(&cfg)?;
     let worktree = run.git.worktree_path.clone().unwrap_or_else(|| run.repo_root.clone());
-    let Some((d, out)) = crate::policies::agent_hook::decide(&set, &input, &worktree) else { return Ok(None) };
+    let locked: Vec<String> = run.contract.as_ref().map(|c| c.files.keys().cloned().collect()).unwrap_or_default();
+    let Some((d, out)) = crate::policies::agent_hook::decide_with_locks(&set, &input, &worktree, &locked) else { return Ok(None) };
     if d.decision != crate::policies::Decision::Allow {
         let tool = input.get("tool_name").and_then(|t| t.as_str()).unwrap_or("?");
         ctx.audit(
