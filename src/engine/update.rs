@@ -38,7 +38,12 @@ pub fn conflict_with_active(task: &Task, active: &[(Task, Run)]) -> Option<Strin
         }
         for g in &t.options.scope {
             let p = literal_prefix(g);
-            if mine.iter().any(|m| prefixes_overlap(m, p)) {
+            // A glob that starts with a wildcard says nothing about where it
+            // lands; only the changed-files check below can tell.
+            if p.is_empty() {
+                continue;
+            }
+            if mine.iter().any(|m| !m.is_empty() && prefixes_overlap(m, p)) {
                 return Some(format!("may conflict with #{} (both change {})", t.task_id, if p.is_empty() { g.as_str() } else { p }));
             }
         }
