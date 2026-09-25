@@ -1572,7 +1572,7 @@ fn content_fingerprint(worktree: &std::path::Path, f: &ChangedFile) -> String {
 }
 
 /// Compile path globs the same way policy does (`*` stays in a segment).
-pub(super) fn scope_set(globs: &[String]) -> Option<globset::GlobSet> {
+pub(crate) fn scope_set(globs: &[String]) -> Option<globset::GlobSet> {
     if globs.is_empty() {
         return None;
     }

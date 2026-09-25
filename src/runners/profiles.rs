@@ -76,6 +76,7 @@ pub const FAKE_SCENARIOS: &[&str] = &[
     "contract-green",
     "fix-contract",
     "contract-tamper",
+    "resolve-conflicts",
 ];
 
 fn builtin(name: &str) -> Option<RunnerProfile> {

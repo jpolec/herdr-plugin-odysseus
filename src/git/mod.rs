@@ -393,6 +393,29 @@ pub fn file_at(repo: &Path, rev: &str, path: &str) -> Option<Vec<u8>> {
     out.status.success().then_some(out.stdout)
 }
 
+/// `git merge --no-ff <rev>` in a worktree (hooks off). Returns the paths
+/// with conflicts; on conflicts the merge is left in progress for someone to
+/// resolve (committing concludes it).
+pub fn merge_no_ff(worktree: &Path, rev: &str, message: &str) -> Result<Vec<String>> {
+    if rev.starts_with('-') {
+        bail!("refusing suspicious revision {rev:?}");
+    }
+    let out = std::process::Command::new("git")
+        .args(["-c", "core.hooksPath=/dev/null", "-c", "user.name=herdr-orchestrator", "-c", "user.email=herdr-orchestrator@localhost", "merge", "--no-ff", "--no-edit", "-m", message, rev])
+        .current_dir(worktree)
+        .output()?;
+    if out.status.success() {
+        return Ok(vec![]);
+    }
+    let conflicted = git(worktree, &["diff", "--name-only", "--diff-filter=U"])?;
+    let files: Vec<String> = conflicted.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+    if files.is_empty() {
+        let _ = git(worktree, &["merge", "--abort"]);
+        bail!("git merge failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(files)
+}
+
 /// `true` when `commit` is reachable from `rev` (it has been merged into it).
 pub fn is_ancestor(repo: &Path, commit: &str, rev: &str) -> bool {
     git(repo, &["merge-base", "--is-ancestor", commit, rev]).is_ok()

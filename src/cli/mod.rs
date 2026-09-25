@@ -438,6 +438,16 @@ pub enum RunCmd {
         #[arg(long)]
         ready: bool,
     },
+    /// Merge the moved base (default: the run's base branch) into a finished
+    /// run's branch; clean merges are re-tested, conflicts go to an agent.
+    /// Never rebases or force-pushes.
+    Update {
+        run: String,
+        #[arg(long)]
+        onto: Option<String>,
+        #[arg(long, short)]
+        runner: Option<String>,
+    },
     /// Queue a follow-up on the run's PR from its review comments and
     /// failing checks (same branch, same PR).
     Followup {
@@ -1102,6 +1112,17 @@ fn run_cmd(app: &App, c: RunCmd) -> Result<i32> {
             }
             let url = engine::handoff::create_pr_for_run(&ctx, &run, !ready, user())?;
             println!("{url}");
+            Ok(0)
+        }
+        RunCmd::Update { run, onto, runner } => {
+            let ctx = app.ctx(false)?;
+            let (t, conflicts) = engine::update::update_branch(&ctx, &run, onto.as_deref(), runner, "cli")?;
+            if conflicts.is_empty() {
+                println!("merged cleanly; queued #{} to re-test and push", t.task_id);
+            } else {
+                println!("{} conflict(s): {}; queued #{} for an agent to resolve them", conflicts.len(), conflicts.join(", "), t.task_id);
+            }
+            app.ensure_daemon()?;
             Ok(0)
         }
         RunCmd::Followup { run, note, runner, no_start } => {

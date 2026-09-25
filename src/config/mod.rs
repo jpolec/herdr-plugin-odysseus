@@ -104,11 +104,14 @@ pub struct SchedulerConfig {
     pub max_parallel_runs: usize,
     pub max_parallel_agents: usize,
     pub poll_interval_ms: u64,
+    /// Do not start a task whose `scope` overlaps an active run's scope or
+    /// changed files (tasks without a scope are not held back).
+    pub avoid_conflicts: bool,
 }
 
 impl Default for SchedulerConfig {
     fn default() -> Self {
-        Self { max_parallel_runs: 4, max_parallel_agents: 8, poll_interval_ms: 1000 }
+        Self { max_parallel_runs: 4, max_parallel_agents: 8, poll_interval_ms: 1000, avoid_conflicts: true }
     }
 }
 

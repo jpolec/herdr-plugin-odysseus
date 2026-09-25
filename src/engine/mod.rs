@@ -10,6 +10,9 @@ pub mod learn;
 pub mod maintenance;
 pub mod receipt;
 pub mod tracker;
+pub mod update;
+
+pub(crate) use steps::scope_set as steps_scope_set;
 pub mod plan;
 pub mod scheduler;
 mod steps;
@@ -303,6 +306,11 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
         }
         None => None,
     };
+    // A branch update diffs against the new base it was merged with.
+    let update_base = match (&continued, &task.options.base_ref) {
+        (Some(_), Some(b)) => Some((b.clone(), crate::git::rev_parse(&task.repo_root, b)?)),
+        _ => None,
+    };
     let mut runs = vec![];
     let variants = task.options.variants.max(1);
     let first_agent = wf.steps.iter().find(|s| s.kind() == StepKind::Agent).map(|s| s.id.clone());
@@ -324,8 +332,8 @@ pub fn create_runs(ctx: &EngineCtx, task: &Task) -> Result<Vec<Run>> {
             repo_root: task.repo_root.clone(),
             git: match &continued {
                 Some(p) => GitState {
-                    base_ref: p.git.base_ref.clone(),
-                    base_sha: p.git.base_sha.clone(),
+                    base_ref: update_base.as_ref().map(|(r, _)| r.clone()).unwrap_or_else(|| p.git.base_ref.clone()),
+                    base_sha: update_base.as_ref().map(|(_, s)| s.clone()).or_else(|| p.git.base_sha.clone()),
                     branch: p.git.branch.clone(),
                     worktree_path: p.git.worktree_path.clone(),
                     ..Default::default()

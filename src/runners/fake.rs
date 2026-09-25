@@ -185,6 +185,17 @@ pub fn perform(scenario: &str, cwd: &Path, output_file: &Path, step_id: &str, at
             write(output_file, &summary("changed the contract"))?;
             Ok(FakeResult::Done)
         }
+        "resolve-conflicts" => {
+            // Take both sides of every conflict (drop the markers).
+            let out = std::process::Command::new("git").args(["diff", "--name-only", "--diff-filter=U"]).current_dir(cwd).output()?;
+            for f in String::from_utf8_lossy(&out.stdout).lines().filter(|l| !l.is_empty()) {
+                let text = std::fs::read_to_string(cwd.join(f))?;
+                let kept: String = text.lines().filter(|l| !(l.starts_with("<<<<<<<") || l.starts_with("=======") || l.starts_with(">>>>>>>"))).map(|l| format!("{l}\n")).collect();
+                write(&cwd.join(f), &kept)?;
+            }
+            write(output_file, &summary("resolved the conflicts"))?;
+            Ok(FakeResult::Done)
+        }
         other => bail!("unknown fake scenario {other}"),
     }
 }

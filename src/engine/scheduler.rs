@@ -100,6 +100,9 @@ impl Scheduler {
             if waiting && !self.dependencies_ready(&task)? {
                 continue;
             }
+            if task.status == TaskStatus::Queued && task.run_ids.is_empty() && !task.options.scope.is_empty() && self.held_back_by_conflict(&task)? {
+                continue;
+            }
             if task.status == TaskStatus::Queued && task.run_ids.is_empty() {
                 // Claim under a lock and re-check: a foreground CLI and the
                 // daemon may both be scheduling.
@@ -166,6 +169,29 @@ impl Scheduler {
             }
         }
         Ok(matches!(state, DepState::Ready(_)))
+    }
+
+    /// Conflict-aware claiming: record why the task waits (or clear it).
+    fn held_back_by_conflict(&self, task: &Task) -> Result<bool> {
+        let cfg = self.ctx.load_config(Some(&task.repo_root))?;
+        if !cfg.config.scheduler.avoid_conflicts {
+            return Ok(false);
+        }
+        let mut active = vec![];
+        for r in self.ctx.store.list_runs()?.into_iter().filter(|r| !r.status.is_terminal() && r.repo_root == task.repo_root) {
+            if let Ok(t) = self.ctx.store.load_task(&r.task_id) {
+                active.push((t, r));
+            }
+        }
+        let why = super::update::conflict_with_active(task, &active);
+        let conflict_note = |w: &Option<String>| w.as_deref().is_some_and(|x| x.starts_with("may conflict"));
+        if why != task.waiting_on && (why.is_some() || conflict_note(&task.waiting_on)) {
+            let _ = self.ctx.store.update_task(&task.task_id, |t| {
+                t.waiting_on = why.clone();
+                Ok(())
+            });
+        }
+        Ok(why.is_some())
     }
 
     fn spawn(&mut self, run_id: &str) {

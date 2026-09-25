@@ -1,0 +1,30 @@
+# update-resolve: an agent resolves the conflicts of merging the base into a
+# run's branch (used by `run update`): resolve → tests (retry ×2) → approval
+# → push to the existing PR.
+version: 1
+name: update-resolve
+description: Resolve merge conflicts after merging the base into a branch (used by `run update`).
+defaults:
+  timeout: 45m
+steps:
+  - id: resolve
+    type: agent
+    skill: implementation
+    prompt: |
+      {{task}}
+
+      {{feedback}}
+  - id: tests
+    type: check
+    check: tests
+    timeout: 15m
+    on_failure:
+      retry_step: resolve
+      max_attempts: 2
+      feedback: true
+  - id: approval
+    type: approval
+    reason: Conflicts resolved and tests pass. Approve to push.
+  - id: pr
+    type: github_pr
+    draft: true
