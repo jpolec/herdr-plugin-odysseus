@@ -1507,6 +1507,9 @@ impl<'a> RunDriver<'a> {
         if let Some(i) = &self.task.issue {
             b.push_str(&format!("\nCloses #{}\n", i.number));
         }
+        if let Some(TaskSource::Incident { url, .. }) = &self.task.source {
+            b.push_str(&format!("\nFixes the production error {url}\n"));
+        }
         if let Some(l) = &self.task.epic {
             if let Ok(e) = self.ctx.store.load_epic(&l.epic_id) {
                 b.push_str(&format!("\nPart of epic {} (`{}` — {}), plan task {}.\n", e.epic_id, e.adr.path, e.adr.title, l.key));

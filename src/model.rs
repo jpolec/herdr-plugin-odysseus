@@ -298,6 +298,8 @@ pub enum TaskSource {
     PrFeedback { run_id: String, pr_url: String },
     /// Replay of an eval case.
     Eval { eval_id: String, case_id: String },
+    /// A production error (e.g. a Sentry issue).
+    Incident { provider: String, id: String, url: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
