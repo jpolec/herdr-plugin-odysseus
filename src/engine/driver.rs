@@ -49,6 +49,8 @@ pub struct RunDriver<'a> {
     pub(super) task: Task,
     pub(super) catalog: Catalog,
     pub(super) deadline: Instant,
+    /// Last sidebar text reported to Herdr (report only on change).
+    sidebar_sent: Option<String>,
     _lock: FileLock,
 }
 
@@ -87,6 +89,29 @@ impl Drop for ControlWatcher {
             let _ = h.join();
         }
     }
+}
+
+/// One short line for the sidebar: what the run does or needs.
+pub fn sidebar_text(run: &Run) -> String {
+    let current = run.steps.iter().rev().find(|e| !e.status.is_terminal());
+    let tokens = crate::telemetry::compact_tokens(&crate::telemetry::run_agent_usage(run));
+    let short = |s: &str| s.chars().take(40).collect::<String>();
+    let text = match run.status {
+        RunStatus::AwaitingApproval => format!("⏳ approve: {}", current.map(|e| e.step_id.as_str()).unwrap_or("?")),
+        RunStatus::Succeeded => format!("✓ done · {tokens} tok"),
+        RunStatus::Failed => format!("✗ failed: {}", short(run.status_reason.as_deref().unwrap_or(""))),
+        RunStatus::Blocked => format!("⛔ blocked: {}", short(run.status_reason.as_deref().unwrap_or(""))),
+        RunStatus::NeedsHuman => "❗ needs you".into(),
+        RunStatus::Cancelled => "cancelled".into(),
+        RunStatus::Pending | RunStatus::Preparing => "… starting".into(),
+        RunStatus::Running => match current {
+            Some(e) if e.attention.is_some() => format!("⚠ stuck: {}", e.step_id),
+            Some(e) if e.status == StepStatus::AwaitingHuman => format!("❓ {} asks you", e.step_id),
+            Some(e) => format!("→ {}{}", e.step_id, e.runner.as_ref().map(|r| format!(" · {r}")).unwrap_or_default()),
+            None => "→ running".into(),
+        },
+    };
+    text.chars().take(60).collect()
 }
 
 /// Drive a run to a stopping point (terminal, blocked, needs_human).
@@ -149,14 +174,36 @@ impl<'a> RunDriver<'a> {
         let started = run.started_at.unwrap_or_else(now);
         let elapsed = (now() - started).to_std().unwrap_or_default();
         let deadline = Instant::now() + cfg.config.limits.max_runtime.as_duration().saturating_sub(elapsed);
-        Ok(Self { ctx, run, wf, cfg, policy, factory, cancel, task, catalog, deadline, _lock: lock })
+        Ok(Self { ctx, run, wf, cfg, policy, factory, cancel, task, catalog, deadline, sidebar_sent: None, _lock: lock })
     }
 
     // ------------------------------------------------------------ state --
 
     pub(super) fn save(&mut self) -> Result<()> {
         self.run.updated_at = now();
-        self.ctx.store.save_run(&self.run)
+        self.ctx.store.save_run(&self.run)?;
+        self.report_sidebar();
+        Ok(())
+    }
+
+    /// Show the run's state on its workspace in Herdr's sidebar (a custom
+    /// token, `$orch` by default). Best effort, only when it changes.
+    fn report_sidebar(&mut self) {
+        let token = self.cfg.config.herdr.sidebar_token.clone();
+        if token.is_empty() || self.run.dry_run {
+            return;
+        }
+        let (Some(h), Some(ws)) = (self.factory.herdr.clone(), self.run.herdr.workspace_id.clone()) else { return };
+        let text = sidebar_text(&self.run);
+        if self.sidebar_sent.as_deref() == Some(text.as_str()) {
+            return;
+        }
+        let mut tokens = BTreeMap::new();
+        tokens.insert(token, Some(text.clone()));
+        match h.report_workspace_metadata(&ws, &tokens, Some(24 * 3600 * 1000)) {
+            Ok(()) => self.sidebar_sent = Some(text),
+            Err(e) => tracing::debug!("sidebar token: {e}"),
+        }
     }
 
     pub(super) fn audit(&self, event: &str, actor: Actor, step: Option<&str>, data: serde_json::Value) {

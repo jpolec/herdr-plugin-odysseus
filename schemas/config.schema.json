@@ -339,6 +339,12 @@
               "minimum": 0
             }
           ]
+        },
+        "sidebar_token": {
+          "type": "string",
+          "default": "orch",
+          "pattern": "^([A-Za-z0-9_-]{1,32})?$",
+          "description": "Sidebar token set on each run's workspace with its state (\u23f3 approve: \u2026, \u2192 step \u00b7 runner, \u2713 done\u2026). Show it with { token = \"$orch\" } in [ui.sidebar.spaces]. Empty disables."
         }
       }
     },

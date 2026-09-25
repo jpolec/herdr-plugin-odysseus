@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-09-25
+
+### Added
+- **Run state in Herdr's sidebar.** Each run's workspace gets a sidebar token (`$orch` by default, `herdr.sidebar_token`) that says what the run does or needs: `⏳ approve: contract`, `→ implement · claude`, `❓ implement asks you`, `⚠ stuck: implement`, `⛔ blocked: …`, `✗ failed: …`, `✓ done · 3.6k tok`. Reported through `workspace.report_metadata` only when it changes. To show it, add `[{ token = "$orch" }]` as a row of `[ui.sidebar.spaces]` in your Herdr config (the plugin never edits it). Orchestrator approvals are now visible without opening the popup.
+
 ## [0.3.0] - 2026-09-25
 
 Contract-first delivery, a morning inbox for unattended work, a benchmark from your own repository, and integrations with GitHub issues and Sentry.
