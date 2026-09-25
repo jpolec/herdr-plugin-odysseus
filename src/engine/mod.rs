@@ -5,6 +5,7 @@ pub mod digest;
 pub mod driver;
 pub mod followup;
 pub mod handoff;
+pub mod learn;
 pub mod maintenance;
 pub mod receipt;
 pub mod plan;

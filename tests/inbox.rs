@@ -87,3 +87,25 @@ fn risk_reasons_cover_contracts_and_unreviewed_changes() {
     assert_eq!(risk.level, RiskLevel::Low);
     assert!(risk.reasons.iter().any(|x| x.contains("approved contract")));
 }
+
+#[test]
+fn learn_turns_recurring_findings_into_an_approved_instructions_change() {
+    let mut h = Harness::new();
+    h.workflow("rev", "  - id: implement\n    type: agent\n    prompt: x\n  - id: review\n    type: agent\n    output: review\n    prompt: r\n");
+    for i in 0..2 {
+        let t = h.task_with(&format!("change {i}"), TaskOptions { workflow: Some("rev".into()), step_runners: [("implement".to_string(), "fake-success".to_string()), ("review".to_string(), "fake-review-findings".to_string())].into(), ..Default::default() });
+        h.settle(&t.task_id);
+    }
+    let found = herdr_orchestrator::engine::learn::collect(&h.ctx, &h.repo, None).unwrap();
+    assert_eq!(found.iter().filter(|f| f.text.contains("missing error handling")).count(), 2);
+    let (t, n) = herdr_orchestrator::engine::learn::start(&h.ctx, &h.repo, false, Some("fake-touch-agent-config".into())).unwrap().unwrap();
+    assert_eq!(n, found.len());
+    assert!(t.description.contains("missing error handling") && t.description.contains("src: 2"), "{}", t.description);
+    // The instructions change needs a human.
+    let r = h.wait_status(&t.task_id, RunStatus::AwaitingApproval);
+    assert!(h.pending_approval(&r.run_id).unwrap().reason.contains("CLAUDE.md"));
+    // Nothing new since: nothing to learn.
+    h.decide(&r.run_id, false);
+    h.settle(&t.task_id);
+    assert!(herdr_orchestrator::engine::learn::start(&h.ctx, &h.repo, false, None).unwrap().is_none());
+}

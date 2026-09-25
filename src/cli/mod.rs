@@ -91,6 +91,19 @@ pub enum Cmd {
     },
     /// Outcomes per implementing runner and workflow (local data only).
     Stats,
+    /// Turn recurring review findings, unmet criteria, PR comments and
+    /// guardrail hits into proposed agent instructions (AGENTS.md, CLAUDE.md,
+    /// .ai/skills) — a task whose diff you approve.
+    Learn {
+        /// All history, not only what happened since the last `learn`.
+        #[arg(long)]
+        all: bool,
+        /// Only show what would be learned from.
+        #[arg(long)]
+        list: bool,
+        #[arg(long, short)]
+        runner: Option<String>,
+    },
     /// Everything that needs you, most urgent first, with risk and reasons.
     Inbox {
         /// How far back finished work is listed (default 24h).
@@ -652,6 +665,30 @@ pub fn main() -> Result<i32> {
         Cmd::Stats => stats_cmd(&app),
         Cmd::Eval(c) => eval_cmd(&app, c),
         Cmd::Inbox { since } => inbox_cmd(&app, &since),
+        Cmd::Learn { all, list, runner } => {
+            let ctx = app.ctx(false)?;
+            let repo = app.repo()?;
+            if list {
+                let since = if all { None } else { engine::learn::load_state(&ctx).last_learn };
+                let f = engine::learn::collect(&ctx, &repo, since)?;
+                if app.cli_json {
+                    return app.print_json(&f).map(|_| 0);
+                }
+                for x in &f {
+                    println!("{:<28} {:<6} {}{}", x.source.chars().take(28).collect::<String>(), x.run, x.file.as_ref().map(|p| format!("{p}: ")).unwrap_or_default(), x.text.chars().take(120).collect::<String>());
+                }
+                println!("\n{} finding(s)", f.len());
+                return Ok(0);
+            }
+            match engine::learn::start(&ctx, &repo, all, runner)? {
+                Some((t, n)) => {
+                    println!("queued #{} — an agent turns {n} findings into proposed instructions; the change waits for your approval", t.task_id);
+                    app.ensure_daemon()?;
+                }
+                None => println!("nothing new to learn from"),
+            }
+            Ok(0)
+        }
         Cmd::Shift(c) => shift_cmd(&app, c),
         Cmd::Receipt(ReceiptCmd::Verify { run, at }) => {
             let ctx = app.ctx(false)?;
